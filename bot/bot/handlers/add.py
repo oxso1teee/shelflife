@@ -1,8 +1,8 @@
 """/add: create a record from one line (adapted from telegram-reminder-bot's add dialog).
 
-``/add Spotify 15.11 500rub`` creates the record at once. ``/add`` alone asks for
-the line in the next message, the way the original bot's dialog asked for each
-part. The record is created by Wallos through the internal API with the same
+``/add Spotify 15.11 500rub`` creates the record at once. ``/add`` alone, or a
+name without a date, continues step by step (wizard.py), the way the original
+bot's dialog asked for each part. The record is created by Wallos through the internal API with the same
 validation as the website; a repeated Telegram update creates nothing twice.
 """
 
@@ -15,11 +15,12 @@ from datetime import date
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, Update
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 
 from bot import texts
-from bot.parsing import ParseError, QuickAdd, parse_quick_add
-from bot.states import AddItem
+from bot.handlers import wizard
+from bot.keyboards import NavCB
+from bot.parsing import ParseError, QuickAdd, has_date, parse_quick_add
 from bot.wallos_client import AddResult, Record, WallosClient, WallosError
 
 log = logging.getLogger(__name__)
@@ -29,11 +30,6 @@ USAGE = (
     "Формат: <code>/add Название ДД.ММ [сумма]</code>\n"
     f"Например: {texts.ADD_EXAMPLE}\n"
     "Все варианты — /help"
-)
-ASK_LINE = (
-    "Что добавить? Напишите одной строкой название, дату и для подписки — сумму.\n"
-    "Например: <code>Spotify 15.11 500rub</code>\n\n"
-    "/cancel — отменить"
 )
 UNAVAILABLE = texts.UNAVAILABLE
 NOT_LINKED = texts.NOT_LINKED
@@ -114,27 +110,28 @@ async def cmd_add(
     wallos: WallosClient,
     event_update: Update,
 ) -> None:
-    if not (command.args or "").strip():
-        await state.set_state(AddItem.waiting_for_line)
-        await message.answer(ASK_LINE)
+    if message.from_user is None:
         return
-
+    line = (command.args or "").strip()
     await state.clear()
-    await add_from_line(message, command.args, wallos, event_update)
+    if not line:
+        await wizard.start(message, message.from_user.id, state, wallos)
+        return
+    if not has_date(line) and len(line) <= 100:
+        # A name without a date: continue step by step from there.
+        await wizard.start(message, message.from_user.id, state, wallos, name=line)
+        return
+    await add_from_line(message, line, wallos, event_update)
 
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
-    if await state.get_state() is None:
+    if not await wizard.leave(state):
         await message.answer("Сейчас нечего отменять. Добавить запись — /add")
         return
-    await state.clear()
-    await message.answer("Ввод отменён.")
-
-
-@router.message(AddItem.waiting_for_line)
-async def receive_line(
-    message: Message, state: FSMContext, wallos: WallosClient, event_update: Update
-) -> None:
-    await state.clear()
-    await add_from_line(message, (message.text or "").strip(), wallos, event_update)
+    home = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🏠 Главная", callback_data=NavCB(to="home").pack())]
+        ]
+    )
+    await message.answer(wizard.CANCELLED, reply_markup=home)

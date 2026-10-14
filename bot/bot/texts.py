@@ -10,7 +10,8 @@ the web app sends as a reminder (web/includes/shelflife/notifications.php)::
     Сумма: 500 ₽
 
 Emoji only mark the kind of message: ✅ done, ❌ cancelled, ⏰ snoozed,
-⚠️ something to fix.
+⚠️ something to fix — and a record's status, as the website's traffic lights:
+🔴 overdue, 🟡 less than a week left, 🟢 later, ⚪ cancelled.
 """
 
 from __future__ import annotations
@@ -30,6 +31,8 @@ CURRENCY_SYMBOLS = {
     "RUB": "₽", "USD": "$", "EUR": "€", "KZT": "₸", "UAH": "₴",
     "GBP": "£", "CNY": "¥", "TRY": "₺", "BYN": "Br",
 }  # fmt: skip
+
+STATUS_MARKS = {"overdue": "🔴", "soon": "🟡", "ok": "🟢", "inactive": "⚪"}
 
 UNAVAILABLE = "Сервис временно недоступен. Попробуйте ещё раз через минуту."
 NOT_LINKED = (
@@ -78,7 +81,11 @@ def format_date(value: date | str) -> str:
 
 def relative(due: date, now: date) -> str:
     """'сегодня', 'завтра', 'через 3 дня', 'вчера', '2 дня назад'."""
-    delta = (due - now).days
+    return relative_days((due - now).days)
+
+
+def relative_days(delta: int) -> str:
+    """The same, from the number of days left."""
     if delta == 0:
         return "сегодня"
     if delta == 1:
@@ -90,9 +97,13 @@ def relative(due: date, now: date) -> str:
 
 def money(amount: float, currency: str | None) -> str:
     """'1 500 ₽', '9,99 $', '120 PLN' for a code without a symbol."""
+    return amount_with(amount, CURRENCY_SYMBOLS.get(currency or "", currency or ""))
+
+
+def amount_with(amount: float, symbol: str) -> str:
+    """An amount with the given currency sign (the account's own, from the website)."""
     integer, cents = f"{amount:,.2f}".split(".")
     text = integer.replace(",", NBSP) + ("" if cents == "00" else "," + cents)
-    symbol = CURRENCY_SYMBOLS.get(currency or "", currency or "")
     return f"{text}{NBSP}{symbol}" if symbol else text
 
 
@@ -103,6 +114,16 @@ def period(cycle: int, frequency: int) -> str | None:
         return None
     n = max(1, frequency)
     return unit[0] if n == 1 else f"каждые {n} {plural(n, *unit[1:])}"
+
+
+def renew_period(cycle: int, frequency: int) -> str:
+    """What renewing adds: 'месяц', '3 месяца', 'год'; a one-time record moves by a month
+    (as the web app renews it and as its "Продлено на …" reminder button says)."""
+    unit = _PERIODS.get(cycle)
+    n = max(1, frequency)
+    if unit is None or n == 1:
+        return unit[1] if unit else "месяц"
+    return f"{n} {plural(n, *unit[1:])}"
 
 
 def shorten(text: str, limit: int = NAME_MAX) -> str:

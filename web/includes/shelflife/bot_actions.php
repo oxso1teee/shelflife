@@ -11,7 +11,7 @@
 require_once __DIR__ . '/subscription_service.php';
 require_once __DIR__ . '/telegram_link.php';
 
-const SHELFLIFE_BOT_ACTIONS = ['renew', 'cancel', 'snooze'];
+const SHELFLIFE_BOT_ACTIONS = ['renew', 'cancel', 'snooze', 'reactivate', 'delete'];
 
 /**
  * Runs $action once per Telegram update. A repeated update id gets the response
@@ -141,7 +141,8 @@ function shelflife_bot_default_id(SQLite3 $db, $table, $userId)
  * Creates a record from the bot's /add command.
  *
  * @param array  $user    the linked account (shelflife_link_find_user())
- * @param array  $payload kind, name, next_payment, and optionally price, currency, cycle, frequency
+ * @param array  $payload kind, name, next_payment, and optionally price, currency, cycle, frequency,
+ *                        category_id (one of the user's categories; checked by the shared service)
  * @param string $today   Y-m-d
  * @return array ['status' => 'created', 'record' => [...]] | ['status' => 'invalid', 'field' => ..., 'message' => ...]
  */
@@ -170,7 +171,7 @@ function shelflife_bot_add_record(SQLite3 $db, array $user, array $payload, $tod
         'next_payment' => $payload['next_payment'] ?? null,
         'start_date' => $today,
         'auto_renew' => false,
-        'category_id' => shelflife_bot_default_id($db, 'categories', $userId),
+        'category_id' => array_key_exists('category_id', $payload) ? $payload['category_id'] : shelflife_bot_default_id($db, 'categories', $userId),
         'payer_user_id' => shelflife_bot_default_id($db, 'household', $userId),
         'payment_method_id' => shelflife_bot_default_id($db, 'payment_methods', $userId),
         'notify' => true,
@@ -196,9 +197,13 @@ function shelflife_bot_add_record(SQLite3 $db, array $user, array $payload, $tod
 }
 
 /**
- * Applies a notification button to the user's record.
+ * Applies a button (under a reminder or on a record card) to the user's record.
  *
- * @param array  $payload subscription_id, action (renew|cancel|snooze), expected_due, optional snooze_days
+ * Every action needs the due date the button was made for, so a press on an
+ * old message after the record changed is answered "stale" and changes nothing.
+ * "delete" answers with no record (there is none left).
+ *
+ * @param array  $payload subscription_id, action (renew|cancel|snooze|reactivate|delete), expected_due, optional snooze_days
  * @param string $today   Y-m-d
  * @return array status plus the record as it is afterwards
  */
@@ -220,6 +225,15 @@ function shelflife_bot_act(SQLite3 $db, array $user, array $payload, $today)
         case 'cancel':
             $result = shelflife_subscription_cancel($db, $userId, $id, $today, $expectedDue);
             break;
+        case 'reactivate':
+            $result = shelflife_subscription_reactivate($db, $userId, $id, $today, $expectedDue);
+            break;
+        case 'delete':
+            $result = shelflife_subscription_delete($db, $userId, $id, $expectedDue);
+            if ($result['status'] === 'deleted') {
+                return ['status' => 'done', 'action' => 'delete', 'record' => null];
+            }
+            break;
         default:
             $days = (int) ($payload['snooze_days'] ?? 1);
             $result = shelflife_subscription_snooze($db, $userId, $id, $today, $expectedDue, min(30, max(1, $days)));
@@ -230,7 +244,7 @@ function shelflife_bot_act(SQLite3 $db, array $user, array $payload, $today)
         return ['status' => 'not_found'];
     }
 
-    $statusByAction = ['renew' => 'renewed', 'cancel' => 'cancelled', 'snooze' => 'snoozed'];
+    $statusByAction = ['renew' => 'renewed', 'cancel' => 'cancelled', 'snooze' => 'snoozed', 'reactivate' => 'reactivated', 'delete' => 'deleted'];
 
     return [
         'status' => $result['status'] === $statusByAction[$action] ? 'done' : $result['status'],

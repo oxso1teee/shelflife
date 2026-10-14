@@ -5,7 +5,8 @@
   Request:  {"telegram_id": 123, "update_id": 456, "kind": "subscription"|"expiry"|"maintenance",
              "name": "Spotify", "next_payment": "2026-11-15",
              "price": "500" (optional for expiry/maintenance), "currency": "RUB" (optional, ISO code),
-             "cycle": 1..5 (optional), "frequency": 1.. (optional)}
+             "cycle": 1..5 (optional), "frequency": 1.. (optional),
+             "category_id": one of the user's categories (optional; default: the first, as the web form)}
   Response: {"status": "created", "record": {...}}
           | {"status": "invalid", "field": "...", "message": "..."}
           | {"status": "not_linked"}

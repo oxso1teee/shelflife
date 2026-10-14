@@ -23,7 +23,15 @@ import re
 from dataclasses import dataclass
 from datetime import date
 
-__all__ = ["CURRENCY_ALIASES", "ParseError", "QuickAdd", "parse_quick_add"]
+__all__ = [
+    "CURRENCY_ALIASES",
+    "ParseError",
+    "QuickAdd",
+    "has_date",
+    "parse_amount",
+    "parse_date",
+    "parse_quick_add",
+]
 
 MAX_NAME_LENGTH = 100
 
@@ -135,6 +143,43 @@ def parse_quick_add(text: str, today: date) -> QuickAdd:
         cycle=cycle,
         frequency=frequency,
     )
+
+
+def has_date(text: str) -> bool:
+    """Whether the text has a date-like token, as /add would look for one."""
+    return any(_DOT_RE.match(token) or _ISO_RE.match(token) for token in (text or "").split())
+
+
+def parse_date(text: str, today: date) -> date:
+    """One date, as /add reads it: DD.MM (the next such date), DD.MM.YY,
+    DD.MM.YYYY or YYYY-MM-DD; a date that has passed is refused."""
+    token = (text or "").strip()
+    if not (_DOT_RE.match(token) or _ISO_RE.match(token)):
+        raise ParseError("Не понял дату. Формат: ДД.ММ или ДД.ММ.ГГГГ, например 15.11.")
+    return _build_date(token, today)
+
+
+def parse_amount(text: str) -> tuple[str, str | None]:
+    """One amount, as /add reads it: 500, 500rub, 500 руб, 9.99$, $9.99, 10€.
+
+    Returns the price as a decimal string with a dot and the ISO currency code
+    (None: the account's main currency).
+    """
+    tokens = (text or "").lower().split()
+    amount = _AMOUNT_RE.match(tokens[0]) if 1 <= len(tokens) <= 2 else None
+    if amount is None:
+        raise ParseError("Не понял сумму. Например: 500, 500rub, 9.99$.")
+    prefix, number, suffix = amount.groups()
+    price = _price(number)
+    unit = prefix or suffix
+    if len(tokens) == 2:
+        if unit:
+            raise ParseError("Не понял сумму. Например: 500, 500rub, 9.99$.")
+        unit = tokens[1]
+    currency = _currency(unit) if unit else None
+    if unit and currency is None:
+        raise ParseError(f"Не знаю валюту «{unit}». Например: 500rub, 9.99$, 10€.")
+    return price, currency
 
 
 def _find_date(tokens: list[str], today: date) -> tuple[int, date]:

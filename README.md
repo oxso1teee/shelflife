@@ -7,7 +7,7 @@ ShelfLife собран из готовых проектов:
 | Каталог | Основа | Лицензия | Роль |
 |---|---|---|---|
 | `web/` | [Wallos](https://github.com/ellite/Wallos) 5.8.3 (`cc9677a`) | GPL-3.0 (`web/LICENSE.md`, `web/NOTICE.md`) | сайт, база SQLite, вся логика записей, рассылка напоминаний, внутренний API для бота |
-| `bot/` | [telegram-reminder-bot](https://github.com/AlexDreamien/telegram-reminder-bot) (`26f29cb`) | MIT (`bot/LICENSE`) | Telegram-адаптер: `/start <token>`, `/add`, кнопки под напоминаниями |
+| `bot/` | [telegram-reminder-bot](https://github.com/AlexDreamien/telegram-reminder-bot) (`26f29cb`) | MIT (`bot/LICENSE`) | Telegram-адаптер: главная, записи и их карточки, добавление по шагам и одной строкой, «Скоро», расходы, настройки, кнопки под напоминаниями |
 | — | [Vorrat](https://github.com/MarcelMuechler/Vorrat) | MIT | правила статуса срока годности и их тест-кейсы перенесены в `web/includes/shelflife/status.php` |
 
 Всё лежит в одном репозитории. История Wallos и telegram-reminder-bot сохранена: она влита в каталоги `web/` и `bot/` (как при `git subtree`), поверх неё — изменения ShelfLife. Поэтому исправления из исходных проектов переносятся слиянием (см. OPERATIONS.md, раздел 8).
@@ -21,15 +21,17 @@ cp .env.example .env    # секреты заполняются только л�
 
 ```
 браузер ─HTTPS─► caddy ─► web (Wallos: nginx + PHP + cron) ──► SQLite .data/db/wallos.db
-                               │  includes/shelflife/*  — общая логика записей, дат, привязки, рассылки
-                               │  cron каждые 5 мин: напоминания с кнопками ─► Telegram
-                               ▲
-                 /api/internal/telegram/* (сервисный ключ, только внутренняя сеть)
-                               │
-            bot (aiogram) ◄── Telegram: /start <token>, /add, нажатия кнопок
+Mini App ─HTTPS─┘   │  includes/shelflife/*  — общая логика записей, дат, сводки, привязки, рассылки
+ (web/tma,          │  /api/tma/app.php — Mini App, вход по подписи Telegram (initData)
+  внутри Telegram)  │  cron каждые 5 мин: напоминания с кнопками ─► Telegram
+                    ▲
+      /api/internal/telegram/* (сервисный ключ, только внутренняя сеть)
+                    │
+ bot (aiogram) ◄── Telegram: команды, кнопки разделов и записей, /add, кнопки напоминаний
 ```
 
-- Единственный источник данных — база Wallos. Бот не хранит данных и не повторяет логику: каждое действие он передаёт во внутренний API, а тот вызывает те же функции, что и сайт.
+- Единственный источник данных — база Wallos. Бот и Mini App не хранят данных и не повторяют логику: каждое действие идёт в API сайта, а тот вызывает те же функции, что и сайт. Сводку, статусы, «Скоро» и расходы считает `includes/shelflife/overview.php` — одинаково для бота и Mini App.
+- Mini App узнаёт пользователя только по `initData`, подписанным Telegram; сервер проверяет подпись токеном бота. Подробнее — в OPERATIONS.md (разделы 11 и 13) и в [branding/telegram/README.md](branding/telegram/README.md): аватар, тексты BotFather и подключение Mini App.
 - Подробности по установке, резервному копированию и обновлению — в [OPERATIONS.md](OPERATIONS.md).
 
 ## Разработка
@@ -59,6 +61,11 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 ```bash
 # на чистой базе: стек запущен с SHELFLIFE_SERVICE_KEY, TELEGRAM_BOT_USERNAME и любым TELEGRAM_BOT_TOKEN
 bot/.venv/bin/python scripts/acceptance.py
+
+# затем Mini App в Chrome (Playwright): экраны, действия, обе темы, 320 px, проверка базы
+python3 scripts/tma_ui_check.py --out /tmp/tma-shots
 ```
+
+Оба скрипта меняют базу стека, на котором запущены, — гоняйте их на отдельном стенде (OPERATIONS.md, раздел 9), не на рабочей базе.
 
 Резервное копирование и восстановление: `scripts/backup.sh`, `scripts/restore.sh` (см. OPERATIONS.md).

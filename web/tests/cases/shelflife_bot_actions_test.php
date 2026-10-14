@@ -236,7 +236,7 @@ wallos_test('a button cannot touch another user\'s record', function () {
     $row = shelflife_subscription_find($db, 1, $id);
     assert_same(['2026-10-31', 0, null], [$row['next_payment'], $row['inactive'], $row['snoozed_until']], 'alice\'s record is untouched');
 
-    assert_same('invalid', shelflife_bot_act($db, $alice, ['subscription_id' => $id, 'action' => 'delete', 'expected_due' => '2026-10-31'], '2026-10-30')['status'], 'unknown action');
+    assert_same('invalid', shelflife_bot_act($db, $alice, ['subscription_id' => $id, 'action' => 'archive', 'expected_due' => '2026-10-31'], '2026-10-30')['status'], 'unknown action');
 
     $db->close();
 });

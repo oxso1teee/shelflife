@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 import pytest
 from aiogram.filters import CommandObject
 
-from bot.handlers import common
-from bot.wallos_client import Account, LinkResult, WallosError
+from bot.handlers import common, nav
+from bot.wallos_client import LinkResult, WallosError
 
 TOKEN = "0123456789abcdef0123456789abcdef"
 
@@ -60,7 +60,6 @@ async def test_a_valid_token_links_the_sender():
     assert wallos.link_calls == [(TOKEN, 555, "alice_tg")]
     assert message.answers == [common.linked_text("alice")]
     assert message.answers[0].startswith("✅ Аккаунт <b>alice</b> привязан.")
-    assert "/add Spotify 15.11 500rub" in message.answers[0], "the next step is shown"
 
 
 async def test_the_account_name_is_escaped():
@@ -103,29 +102,11 @@ async def test_wallos_being_down_is_reported():
     assert message.answers == [common.UNAVAILABLE]
 
 
-async def test_start_without_a_token_explains_how_to_link():
-    message = FakeMessage()
-
-    await common.cmd_start(message, FakeWallos(account=Account(linked=False, username=None)))
-
-    assert message.answers == [common.NOT_LINKED]
-
-
-async def test_start_without_a_token_recognises_a_linked_account():
-    message = FakeMessage()
-
-    await common.cmd_start(message, FakeWallos(account=Account(linked=True, username="alice")))
-
-    assert message.answers == [common.already_linked_text("alice")]
-    assert message.answers[0].startswith("👋 Аккаунт <b>alice</b> привязан")
-
-
 async def test_a_message_without_a_sender_is_ignored():
     message = FakeMessage(from_user=None)
     wallos = FakeWallos(link_result=LinkResult("linked", "alice"))
 
     await common.cmd_start_link(message, start_command(TOKEN), wallos)
-    await common.cmd_start(message, wallos)
 
     assert message.answers == []
     assert wallos.link_calls == []
@@ -138,11 +119,12 @@ async def test_the_start_screen_explains_the_bot_and_the_next_step():
     assert text.endswith("/help")
 
 
-async def test_help_lists_the_commands_and_the_buttons():
+async def test_help_lists_the_sections_commands_and_buttons():
     message = FakeMessage()
 
-    await common.cmd_help(message)
+    await nav.cmd_help(message, None)
 
     assert message.answers == [common.HELP_TEXT]
-    for fragment in ("/add", "/cancel", "/start", "«Продлено»", "«Отменено»", "«Напомнить позже»"):
+    for fragment in ("/start", "/add", "/list", "/soon", "/spend", "/settings", "/cancel",
+                     "«Продлено»", "«Отменено»", "«Напомнить позже»"):  # fmt: skip
         assert fragment in common.HELP_TEXT

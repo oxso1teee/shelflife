@@ -13,7 +13,7 @@
   - Uploaded logos (images/uploads/logos) are user data, not part of it.
 */
 
-const SHELFLIFE_ASSET_DIRS = ['styles', 'scripts', 'webfonts', 'images'];
+const SHELFLIFE_ASSET_DIRS = ['styles', 'scripts', 'webfonts', 'images', 'tma'];
 
 /**
  * Hash of the static files under $root: their paths and contents.

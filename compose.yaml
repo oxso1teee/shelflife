@@ -30,6 +30,8 @@ services:
       BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       WALLOS_INTERNAL_URL: http://web/api/internal/telegram
       SHELFLIFE_SERVICE_KEY: ${SHELFLIFE_SERVICE_KEY:-}
+      # The Mini App's public https address; empty: no app buttons in the bot.
+      SHELFLIFE_MINIAPP_URL: ${SHELFLIFE_MINIAPP_URL:-}
     depends_on:
       web:
         condition: service_healthy

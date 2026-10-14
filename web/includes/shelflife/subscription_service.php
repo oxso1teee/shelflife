@@ -549,6 +549,93 @@ function shelflife_subscription_snooze(SQLite3 $db, $userId, $id, $today, $expec
 }
 
 /**
+ * Makes a cancelled (inactive) record active again, as unticking "inactive" on
+ * the website does. A cancellation date that has come is cleared with it; a
+ * planned one in the future stays.
+ *
+ * @return array ['status' => 'reactivated'|'not_found'|'stale'|'active']
+ */
+function shelflife_subscription_reactivate(SQLite3 $db, $userId, $id, $today, $expectedDue)
+{
+    $row = shelflife_subscription_find($db, $userId, $id);
+    if ($row === null) {
+        return ['status' => 'not_found'];
+    }
+    if ((int) $row['inactive'] === 0) {
+        return ['status' => 'active'];
+    }
+    if ($row['next_payment'] !== $expectedDue) {
+        return ['status' => 'stale'];
+    }
+
+    $stmt = $db->prepare('UPDATE subscriptions
+                          SET inactive = 0,
+                              cancellation_date = CASE WHEN cancellation_date <= :today THEN NULL ELSE cancellation_date END
+                          WHERE id = :id AND user_id = :userId AND inactive = 1 AND next_payment = :due');
+    $stmt->bindValue(':today', $today, SQLITE3_TEXT);
+    $stmt->bindValue(':id', (int) $id, SQLITE3_INTEGER);
+    $stmt->bindValue(':userId', (int) $userId, SQLITE3_INTEGER);
+    $stmt->bindValue(':due', $expectedDue, SQLITE3_TEXT);
+    if ($stmt->execute() === false) {
+        throw new RuntimeException('Failed to reactivate the record: ' . $db->lastErrorMsg());
+    }
+
+    return ['status' => $db->changes() === 1 ? 'reactivated' : 'stale'];
+}
+
+/**
+ * Deletes the user's record the way the website does
+ * (endpoints/subscription/delete.php): other records stop pointing at it as
+ * their replacement, and its logo files go if nothing else uses them. Its
+ * queued Telegram reminders go too.
+ *
+ * @param string|null $expectedDue when given, the record must still be due on it
+ * @param string|null $logosDir    the logos directory (default: the app's)
+ * @return array ['status' => 'deleted'|'not_found'|'stale']
+ */
+function shelflife_subscription_delete(SQLite3 $db, $userId, $id, $expectedDue = null, $logosDir = null)
+{
+    $row = shelflife_subscription_find($db, $userId, $id);
+    if ($row === null) {
+        return ['status' => 'not_found'];
+    }
+    if ($expectedDue !== null && $row['next_payment'] !== $expectedDue) {
+        return ['status' => 'stale'];
+    }
+
+    $statements = [
+        'DELETE FROM subscriptions WHERE id = :id AND user_id = :userId',
+        'UPDATE subscriptions SET replacement_subscription_id = NULL WHERE replacement_subscription_id = :id AND user_id = :userId',
+        'DELETE FROM telegram_outbox WHERE subscription_id = :id AND user_id = :userId',
+    ];
+    // A savepoint, not BEGIN: the bot and the Mini App call this inside the
+    // transaction of shelflife_bot_once(), and SQLite does not nest BEGIN.
+    $db->exec('SAVEPOINT shelflife_delete');
+    try {
+        foreach ($statements as $sql) {
+            $stmt = $db->prepare($sql);
+            $stmt->bindValue(':id', (int) $id, SQLITE3_INTEGER);
+            $stmt->bindValue(':userId', (int) $userId, SQLITE3_INTEGER);
+            if ($stmt->execute() === false) {
+                throw new RuntimeException('Failed to delete the record: ' . $db->lastErrorMsg());
+            }
+        }
+        $db->exec('RELEASE shelflife_delete');
+    } catch (Throwable $e) {
+        $db->exec('ROLLBACK TO shelflife_delete');
+        $db->exec('RELEASE shelflife_delete');
+        throw $e;
+    }
+
+    require_once __DIR__ . '/../logo_cleanup.php';
+    $logosDir = $logosDir ?? __DIR__ . '/../../images/uploads/logos/';
+    deleteLogoFileIfUnused($db, $row['logo'] ?? '', $logosDir);
+    deleteLogoFileIfUnused($db, $row['logo_variant'] ?? '', $logosDir);
+
+    return ['status' => 'deleted'];
+}
+
+/**
  * Moves every automatically renewing record whose due date has passed to its
  * next due date on or after $today. Run daily by
  * endpoints/cronjobs/updatenextpayment.php.

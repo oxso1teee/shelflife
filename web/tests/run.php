@@ -49,11 +49,27 @@ foreach ($GLOBALS['wallos_tests'] as $test) {
     $GLOBALS['wallos_test_current'] = $test['name'];
     $before = count($GLOBALS['wallos_test_failures']);
 
+    // A PHP warning or notice is a failure: on the server it is printed into
+    // the response (an API answer stops being JSON). "@" still silences one.
+    set_error_handler(function ($level, $message, $file, $line) {
+        if (!(error_reporting() & $level)) {
+            return false;
+        }
+        // Known and harmless, from Wallos itself: migration 000016 drops a table
+        // it is still reading from, and the drop is refused (as in scripts/acceptance.py).
+        if (basename($file) === '000016.php' && strpos($message, 'database table is locked') !== false) {
+            return true;
+        }
+        wallos_test_fail('PHP warning: ' . $message . ' @ ' . basename($file) . ':' . $line);
+        return true;
+    });
     try {
         $test['body']();
     } catch (Throwable $error) {
         wallos_test_fail('threw ' . get_class($error) . ': ' . $error->getMessage()
             . ' @ ' . basename($error->getFile()) . ':' . $error->getLine());
+    } finally {
+        restore_error_handler();
     }
 
     $newFailures = array_slice($GLOBALS['wallos_test_failures'], $before);

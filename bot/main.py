@@ -42,12 +42,16 @@ async def main() -> None:
         required_env("SHELFLIFE_SERVICE_KEY"),
     )
 
+    app_url = menu.miniapp_url(os.environ.get("SHELFLIFE_MINIAPP_URL"))
+    if os.environ.get("SHELFLIFE_MINIAPP_URL") and app_url is None:
+        log.warning("SHELFLIFE_MINIAPP_URL is not an https address; the Mini App buttons stay off.")
+
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    setup_handlers(dp, wallos)
+    setup_handlers(dp, wallos, app_url)
 
     try:
-        await menu.publish(bot)
+        await menu.publish(bot, app_url)
         await dp.start_polling(bot)
     finally:
         await wallos.close()

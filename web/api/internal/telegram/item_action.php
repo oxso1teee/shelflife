@@ -3,8 +3,9 @@
   ShelfLife internal API: a notification button pressed in Telegram.
 
   Request:  {"telegram_id": 123, "update_id": 456, "subscription_id": 7,
-             "action": "renew"|"cancel"|"snooze", "expected_due": "2026-11-15", "snooze_days": 1}
-  Response: {"status": "done"|"stale"|"inactive"|"not_recurring", "action": "...", "record": {...}}
+             "action": "renew"|"cancel"|"snooze"|"reactivate"|"delete", "expected_due": "2026-11-15", "snooze_days": 1}
+  Response: {"status": "done"|"stale"|"inactive"|"active"|"not_recurring", "action": "...", "record": {...}}
+          | {"status": "done", "action": "delete", "record": null}
           | {"status": "not_found"} | {"status": "invalid"} | {"status": "not_linked"}
 
   "stale" means the record no longer has the due date the button was sent for:

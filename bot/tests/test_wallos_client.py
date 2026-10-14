@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
@@ -13,6 +16,7 @@ VALID_TOKEN = "a" * 32
 # Wallos answers an update id already processed for another Telegram account
 # with a bare {"status": "invalid"} (includes/shelflife/bot_actions.php).
 REPLAYED_UPDATE = 99
+FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "overview.json").read_text())
 
 
 @pytest.fixture
@@ -74,7 +78,29 @@ async def wallos():
             }
         )
 
+    async def overview(request: web.Request) -> web.Response:
+        payload = await request.json()
+        calls.append(("overview", request.headers.get("X-ShelfLife-Service-Key"), payload))
+        if payload["telegram_id"] == 555:
+            return web.json_response(FIXTURE)
+        if payload["telegram_id"] == 666:
+            return web.json_response({"status": "linked", "overview": {"records": "broken"}})
+        return web.json_response({"status": "not_linked"})
+
+    async def settings(request: web.Request) -> web.Response:
+        payload = await request.json()
+        calls.append(("settings", request.headers.get("X-ShelfLife-Service-Key"), payload))
+        if payload["op"] == "unlink":
+            return web.json_response({"status": "unlinked"})
+        if payload.get("days") == 9:
+            return web.json_response({"status": "invalid", "field": "reminder_days"})
+        if payload["op"] == "reminder_days":
+            return web.json_response({"status": "saved", "reminder_days": payload["days"]})
+        return web.json_response({"status": "surprise"})
+
     app = web.Application()
+    app.router.add_post("/api/internal/telegram/overview.php", overview)
+    app.router.add_post("/api/internal/telegram/settings.php", settings)
     app.router.add_post("/api/internal/telegram/link.php", link)
     app.router.add_post("/api/internal/telegram/me.php", me)
     app.router.add_post("/api/internal/telegram/item_add.php", item_add)
@@ -247,3 +273,57 @@ async def test_a_refused_repeated_update_carries_no_record(wallos):
 
     assert (added.status, added.record, added.field, added.message) == ("invalid", None, None, None)
     assert (acted.status, acted.action, acted.record) == ("invalid", None, None)
+
+
+async def test_overview_is_parsed_from_what_wallos_sends(wallos):
+    base_url, calls = wallos
+    client = WallosClient(base_url, KEY)
+    try:
+        ov = await client.overview(555)
+        stranger = await client.overview(777)
+    finally:
+        await client.close()
+
+    assert stranger is None
+    assert calls[0][1:] == (KEY, {"telegram_id": 555})
+    assert (ov.username, ov.first_name, ov.reminder_days) == ("anna", "Анна", 2)
+    assert ov.site_url == "https://shelflife.example.com"
+    assert ov.main_currency.code == "RUB"
+    spotify = ov.item(1)
+    assert (spotify.name, spotify.next_payment, spotify.status) == ("Spotify", "2026-10-15", "soon")
+    assert spotify.currency.code == "RUB" and spotify.category == "Музыка"
+    # Different currencies and no rates: per currency, no made-up total.
+    assert [(m.currency.code, m.count) for m in ov.expenses.per_currency] == [
+        ("RUB", 3),
+        ("USD", 1),
+    ]
+    assert ov.expenses.total is None and ov.expenses.convertible is False
+
+
+async def test_a_malformed_overview_is_an_error(wallos):
+    base_url, _ = wallos
+    client = WallosClient(base_url, KEY)
+    try:
+        with pytest.raises(WallosError):
+            await client.overview(666)
+    finally:
+        await client.close()
+
+
+async def test_settings_send_the_operation_and_read_the_result(wallos):
+    base_url, calls = wallos
+    client = WallosClient(base_url, KEY)
+    try:
+        saved = await client.settings(telegram_id=555, update_id=1, op="reminder_days", days=3)
+        refused = await client.settings(telegram_id=555, update_id=2, op="reminder_days", days=9)
+        unlinked = await client.settings(telegram_id=555, update_id=3, op="unlink")
+        with pytest.raises(WallosError):
+            await client.settings(telegram_id=555, update_id=4, op="other")
+    finally:
+        await client.close()
+
+    assert (saved.status, saved.reminder_days) == ("saved", 3)
+    assert (refused.status, refused.reminder_days) == ("invalid", None)
+    assert unlinked.status == "unlinked"
+    assert calls[0][2] == {"telegram_id": 555, "update_id": 1, "op": "reminder_days", "days": 3}
+    assert calls[2][2] == {"telegram_id": 555, "update_id": 3, "op": "unlink"}

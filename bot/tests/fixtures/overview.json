@@ -1,0 +1,563 @@
+{
+    "status": "linked",
+    "overview": {
+        "today": "2026-10-14",
+        "account": {
+            "username": "anna",
+            "first_name": "Анна",
+            "main_currency_id": 9100,
+            "language": "ru",
+            "telegram_username": null,
+            "reminder_days": 2
+        },
+        "currencies": [
+            {
+                "id": 9010,
+                "code": "EUR",
+                "symbol": "€",
+                "name": "Euro"
+            },
+            {
+                "id": 9011,
+                "code": "USD",
+                "symbol": "$",
+                "name": "US Dollar"
+            },
+            {
+                "id": 9100,
+                "code": "RUB",
+                "symbol": "₽",
+                "name": "Russian Ruble"
+            }
+        ],
+        "categories": [
+            {
+                "id": 1,
+                "name": null
+            },
+            {
+                "id": 2,
+                "name": "Музыка"
+            },
+            {
+                "id": 3,
+                "name": "Дом"
+            }
+        ],
+        "records": [
+            {
+                "id": 4,
+                "kind": "expiry",
+                "name": "Витамины",
+                "next_payment": "2026-10-12",
+                "days_left": -2,
+                "status": "overdue",
+                "price": 0,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 5,
+                "frequency": 1,
+                "recurring": false,
+                "category": null,
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": 3,
+                "snoozed_until": null,
+                "auto_renew": false,
+                "monthly": null
+            },
+            {
+                "id": 5,
+                "kind": "expiry",
+                "name": "Молоко",
+                "next_payment": "2026-10-14",
+                "days_left": 0,
+                "status": "soon",
+                "price": 0,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 5,
+                "frequency": 1,
+                "recurring": false,
+                "category": null,
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": false,
+                "monthly": null
+            },
+            {
+                "id": 1,
+                "kind": "subscription",
+                "name": "Spotify",
+                "next_payment": "2026-10-15",
+                "days_left": 1,
+                "status": "soon",
+                "price": 500,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 3,
+                "frequency": 1,
+                "recurring": true,
+                "category": {
+                    "id": 2,
+                    "name": "Музыка"
+                },
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": 500
+            },
+            {
+                "id": 3,
+                "kind": "subscription",
+                "name": "Аренда",
+                "next_payment": "2026-10-19",
+                "days_left": 5,
+                "status": "soon",
+                "price": 30000,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 3,
+                "frequency": 1,
+                "recurring": true,
+                "category": {
+                    "id": 3,
+                    "name": "Дом"
+                },
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": 30000
+            },
+            {
+                "id": 6,
+                "kind": "maintenance",
+                "name": "Фильтр для воды",
+                "next_payment": "2026-11-03",
+                "days_left": 20,
+                "status": "ok",
+                "price": 1500,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 3,
+                "frequency": 3,
+                "recurring": true,
+                "category": {
+                    "id": 3,
+                    "name": "Дом"
+                },
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": null
+            },
+            {
+                "id": 2,
+                "kind": "subscription",
+                "name": "Netflix",
+                "next_payment": "2026-11-23",
+                "days_left": 40,
+                "status": "ok",
+                "price": 9.99,
+                "currency": {
+                    "id": 9011,
+                    "code": "USD",
+                    "symbol": "$",
+                    "name": "US Dollar"
+                },
+                "cycle": 4,
+                "frequency": 1,
+                "recurring": true,
+                "category": null,
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": 0.8325
+            },
+            {
+                "id": 8,
+                "kind": "subscription",
+                "name": "Tom & <Jerry> — очень длинное название подписки, которое не помещается в одну строку",
+                "next_payment": "2027-01-10",
+                "days_left": 88,
+                "status": "ok",
+                "price": 99,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 2,
+                "frequency": 1,
+                "recurring": true,
+                "category": null,
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": 430.65
+            },
+            {
+                "id": 7,
+                "kind": "subscription",
+                "name": "Старая подписка",
+                "next_payment": "2026-09-01",
+                "days_left": -43,
+                "status": "inactive",
+                "price": 199,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 3,
+                "frequency": 1,
+                "recurring": true,
+                "category": null,
+                "inactive": true,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": true,
+                "monthly": null
+            }
+        ],
+        "summary": {
+            "active": 7,
+            "inactive": 1,
+            "overdue": 1,
+            "today": 1,
+            "week": 3,
+            "by_kind": {
+                "subscription": 4,
+                "expiry": 2,
+                "maintenance": 1
+            },
+            "nearest": {
+                "id": 5,
+                "kind": "expiry",
+                "name": "Молоко",
+                "next_payment": "2026-10-14",
+                "days_left": 0,
+                "status": "soon",
+                "price": 0,
+                "currency": {
+                    "id": 9100,
+                    "code": "RUB",
+                    "symbol": "₽",
+                    "name": "Russian Ruble"
+                },
+                "cycle": 5,
+                "frequency": 1,
+                "recurring": false,
+                "category": null,
+                "inactive": false,
+                "notify": true,
+                "notify_days_before": -1,
+                "snoozed_until": null,
+                "auto_renew": false,
+                "monthly": null
+            }
+        },
+        "upcoming": {
+            "groups": [
+                {
+                    "key": "overdue",
+                    "records": [
+                        {
+                            "id": 4,
+                            "kind": "expiry",
+                            "name": "Витамины",
+                            "next_payment": "2026-10-12",
+                            "days_left": -2,
+                            "status": "overdue",
+                            "price": 0,
+                            "currency": {
+                                "id": 9100,
+                                "code": "RUB",
+                                "symbol": "₽",
+                                "name": "Russian Ruble"
+                            },
+                            "cycle": 5,
+                            "frequency": 1,
+                            "recurring": false,
+                            "category": null,
+                            "inactive": false,
+                            "notify": true,
+                            "notify_days_before": 3,
+                            "snoozed_until": null,
+                            "auto_renew": false,
+                            "monthly": null
+                        }
+                    ]
+                },
+                {
+                    "key": "today",
+                    "records": [
+                        {
+                            "id": 5,
+                            "kind": "expiry",
+                            "name": "Молоко",
+                            "next_payment": "2026-10-14",
+                            "days_left": 0,
+                            "status": "soon",
+                            "price": 0,
+                            "currency": {
+                                "id": 9100,
+                                "code": "RUB",
+                                "symbol": "₽",
+                                "name": "Russian Ruble"
+                            },
+                            "cycle": 5,
+                            "frequency": 1,
+                            "recurring": false,
+                            "category": null,
+                            "inactive": false,
+                            "notify": true,
+                            "notify_days_before": -1,
+                            "snoozed_until": null,
+                            "auto_renew": false,
+                            "monthly": null
+                        }
+                    ]
+                },
+                {
+                    "key": "tomorrow",
+                    "records": [
+                        {
+                            "id": 1,
+                            "kind": "subscription",
+                            "name": "Spotify",
+                            "next_payment": "2026-10-15",
+                            "days_left": 1,
+                            "status": "soon",
+                            "price": 500,
+                            "currency": {
+                                "id": 9100,
+                                "code": "RUB",
+                                "symbol": "₽",
+                                "name": "Russian Ruble"
+                            },
+                            "cycle": 3,
+                            "frequency": 1,
+                            "recurring": true,
+                            "category": {
+                                "id": 2,
+                                "name": "Музыка"
+                            },
+                            "inactive": false,
+                            "notify": true,
+                            "notify_days_before": -1,
+                            "snoozed_until": null,
+                            "auto_renew": true,
+                            "monthly": 500
+                        }
+                    ]
+                },
+                {
+                    "key": "week",
+                    "records": [
+                        {
+                            "id": 3,
+                            "kind": "subscription",
+                            "name": "Аренда",
+                            "next_payment": "2026-10-19",
+                            "days_left": 5,
+                            "status": "soon",
+                            "price": 30000,
+                            "currency": {
+                                "id": 9100,
+                                "code": "RUB",
+                                "symbol": "₽",
+                                "name": "Russian Ruble"
+                            },
+                            "cycle": 3,
+                            "frequency": 1,
+                            "recurring": true,
+                            "category": {
+                                "id": 3,
+                                "name": "Дом"
+                            },
+                            "inactive": false,
+                            "notify": true,
+                            "notify_days_before": -1,
+                            "snoozed_until": null,
+                            "auto_renew": true,
+                            "monthly": 30000
+                        }
+                    ]
+                },
+                {
+                    "key": "month",
+                    "records": [
+                        {
+                            "id": 6,
+                            "kind": "maintenance",
+                            "name": "Фильтр для воды",
+                            "next_payment": "2026-11-03",
+                            "days_left": 20,
+                            "status": "ok",
+                            "price": 1500,
+                            "currency": {
+                                "id": 9100,
+                                "code": "RUB",
+                                "symbol": "₽",
+                                "name": "Russian Ruble"
+                            },
+                            "cycle": 3,
+                            "frequency": 3,
+                            "recurring": true,
+                            "category": {
+                                "id": 3,
+                                "name": "Дом"
+                            },
+                            "inactive": false,
+                            "notify": true,
+                            "notify_days_before": -1,
+                            "snoozed_until": null,
+                            "auto_renew": true,
+                            "monthly": null
+                        }
+                    ]
+                }
+            ],
+            "later": 2
+        },
+        "expenses": {
+            "per_currency": [
+                {
+                    "currency": {
+                        "id": 9100,
+                        "code": "RUB",
+                        "symbol": "₽",
+                        "name": "Russian Ruble"
+                    },
+                    "monthly": 30930.65,
+                    "count": 3
+                },
+                {
+                    "currency": {
+                        "id": 9011,
+                        "code": "USD",
+                        "symbol": "$",
+                        "name": "US Dollar"
+                    },
+                    "monthly": 0.8325,
+                    "count": 1
+                }
+            ],
+            "total": null,
+            "convertible": false,
+            "top": [
+                {
+                    "id": 3,
+                    "name": "Аренда",
+                    "monthly": 30000,
+                    "currency": {
+                        "id": 9100,
+                        "code": "RUB",
+                        "symbol": "₽",
+                        "name": "Russian Ruble"
+                    }
+                },
+                {
+                    "id": 1,
+                    "name": "Spotify",
+                    "monthly": 500,
+                    "currency": {
+                        "id": 9100,
+                        "code": "RUB",
+                        "symbol": "₽",
+                        "name": "Russian Ruble"
+                    }
+                },
+                {
+                    "id": 8,
+                    "name": "Tom & <Jerry> — очень длинное название подписки, которое не помещается в одну строку",
+                    "monthly": 430.65,
+                    "currency": {
+                        "id": 9100,
+                        "code": "RUB",
+                        "symbol": "₽",
+                        "name": "Russian Ruble"
+                    }
+                },
+                {
+                    "id": 2,
+                    "name": "Netflix",
+                    "monthly": 0.8325,
+                    "currency": {
+                        "id": 9011,
+                        "code": "USD",
+                        "symbol": "$",
+                        "name": "US Dollar"
+                    }
+                }
+            ],
+            "by_category": [
+                {
+                    "name": "Дом",
+                    "monthly": 30000,
+                    "count": 1
+                },
+                {
+                    "name": "Музыка",
+                    "monthly": 500,
+                    "count": 1
+                },
+                {
+                    "name": null,
+                    "monthly": 430.65,
+                    "count": 1
+                }
+            ],
+            "category_scope": "main",
+            "due_30_days": [
+                {
+                    "currency": {
+                        "id": 9100,
+                        "code": "RUB",
+                        "symbol": "₽",
+                        "name": "Russian Ruble"
+                    },
+                    "amount": 30500,
+                    "count": 2
+                }
+            ]
+        }
+    },
+    "site_url": "https:\/\/shelflife.example.com"
+}

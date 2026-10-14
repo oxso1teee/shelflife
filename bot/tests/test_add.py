@@ -9,14 +9,14 @@ import pytest
 from aiogram.filters import CommandObject
 
 from bot.handlers import add
-from bot.states import AddItem
+from bot.states import AddFlow
 from bot.wallos_client import AddResult, Record, WallosError
 
 TODAY = date(2026, 10, 14)
 
 
 @pytest.fixture(autouse=True)
-def fixed_today(monkeypatch):
+def fixed_add_today(monkeypatch):
     monkeypatch.setattr(add, "today_in_app_timezone", lambda: TODAY)
 
 
@@ -159,32 +159,15 @@ async def test_a_parse_error_is_explained_without_asking_wallos():
     assert message.answers[0].count("/add Spotify 15.11 500rub") == 1, "one example, not two"
 
 
-async def test_add_without_arguments_asks_for_the_line_then_adds_it():
-    state = FakeState()
-    ask = FakeMessage()
-    wallos = FakeWallos(AddResult("created", record()))
-
-    await add.cmd_add(ask, command(None), state, wallos, FakeUpdate())
-    assert state.state == AddItem.waiting_for_line
-    assert ask.answers == [add.ASK_LINE]
-
-    line = FakeMessage(text="Spotify 15.11 500rub")
-    await add.receive_line(line, state, wallos, FakeUpdate(update_id=4243))
-    assert state.state is None
-    assert wallos.calls[0]["name"] == "Spotify"
-    assert wallos.calls[0]["update_id"] == 4243
-    assert line.answers[0].startswith("✅ Запись добавлена")
-
-
 async def test_cancel_leaves_the_dialog():
     state = FakeState()
-    await state.set_state(AddItem.waiting_for_line)
+    await state.set_state(AddFlow.amount)
     message = FakeMessage()
 
     await add.cmd_cancel(message, state)
 
     assert state.state is None
-    assert message.answers == ["Ввод отменён."]
+    assert message.answers == ["Добавление отменено."]
 
 
 async def test_cancel_with_nothing_to_cancel_says_so():

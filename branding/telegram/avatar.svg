@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="640" viewBox="0 0 640 640" role="img" aria-label="ShelfLife">
+  <!-- ShelfLife bot avatar: the logo mark (shelf bars and a clock, web/images/siteicons/svg/logo.php)
+       on the brand blue. Telegram crops avatars to a circle: the mark stays inside its central 70%. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3B82F6"/>
+      <stop offset="1" stop-color="#1D4ED8"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="640" fill="url(#bg)"/>
+  <g transform="translate(320 320) scale(3.9) translate(-51 -52)">
+    <path d="M13 8H53A9 9 0 0 1 53 26H13A9 9 0 0 1 13 8ZM13 41H35A9 9 0 0 1 35 59H13A9 9 0 0 1 13 41ZM13 74H17A9 9 0 0 1 17 92H13A9 9 0 0 1 13 74Z" fill="#BFDBFE"/>
+    <path d="M46 70A26 26 0 1 1 98 70A26 26 0 1 1 46 70ZM68.5 56A3.5 3.5 0 0 1 75.5 56L75.5 66.5L83 66.5A3.5 3.5 0 0 1 83 73.5L72 73.5A3.5 3.5 0 0 1 68.5 70Z" fill-rule="evenodd" fill="#FFFFFF"/>
+  </g>
+</svg>

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from aiogram.fsm.state import State, StatesGroup
 
-__all__ = ["AddItem"]
+__all__ = ["AddFlow"]
 
 
-class AddItem(StatesGroup):
-    # /add without arguments asks for the whole line in the next message.
-    waiting_for_line = State()
+class AddFlow(StatesGroup):
+    """Adding a record step by step (bot/handlers/wizard.py)."""
+
+    name = State()
+    kind = State()
+    category = State()
+    due = State()
+    amount = State()
+    period = State()
+    confirm = State()

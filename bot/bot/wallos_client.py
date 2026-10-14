@@ -21,6 +21,7 @@ __all__ = [
     "AddResult",
     "LinkResult",
     "Record",
+    "SettingsResult",
     "WallosClient",
     "WallosError",
 ]
@@ -88,10 +89,16 @@ class AddResult:
 
 @dataclass(frozen=True, slots=True)
 class ActionResult:
-    # "done" | "stale" | "inactive" | "not_recurring" | "not_found" | "invalid" | "not_linked"
+    # "done" | "stale" | "inactive" | "active" | "not_recurring" | "not_found" | "invalid" | "not_linked"
     status: str
     action: str | None = None
     record: Record | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsResult:
+    status: str  # "saved" | "unlinked" | "invalid" | "not_linked"
+    reminder_days: int | None = None
 
 
 class WallosClient:
@@ -134,6 +141,7 @@ class WallosClient:
         currency: str | None = None,
         cycle: int | None = None,
         frequency: int | None = None,
+        category_id: int | None = None,
     ) -> AddResult:
         payload: dict[str, Any] = {
             "telegram_id": telegram_id,
@@ -142,7 +150,13 @@ class WallosClient:
             "name": name,
             "next_payment": next_payment,
         }
-        optional = {"price": price, "currency": currency, "cycle": cycle, "frequency": frequency}
+        optional = {
+            "price": price,
+            "currency": currency,
+            "cycle": cycle,
+            "frequency": frequency,
+            "category_id": category_id,
+        }
         payload.update({key: value for key, value in optional.items() if value is not None})
 
         data = await self._post("item_add", payload)
@@ -179,7 +193,9 @@ class WallosClient:
             },
         )
         status = data.get("status")
-        known = {"done", "stale", "inactive", "not_recurring", "not_found", "invalid", "not_linked"}
+        known = {
+            "done", "stale", "inactive", "active", "not_recurring", "not_found", "invalid", "not_linked",
+        }  # fmt: skip
         if status not in known:
             raise WallosError(f"item_action: unexpected status {status!r}")
         record = data.get("record")
@@ -187,6 +203,33 @@ class WallosClient:
             status=status,
             action=_optional_str(data.get("action")),
             record=Record.from_json(record) if record is not None else None,
+        )
+
+    async def overview(self, telegram_id: int):
+        """The linked account's overview (bot.overview.Overview), or None when not linked."""
+        from bot.overview import Overview  # the model module imports this one
+
+        data = await self._post("overview", {"telegram_id": telegram_id})
+        status = data.get("status")
+        if status == "not_linked":
+            return None
+        if status != "linked":
+            raise WallosError(f"overview: unexpected status {status!r}")
+        return Overview.from_json(data.get("overview"), data.get("site_url"))
+
+    async def settings(
+        self, *, telegram_id: int, update_id: int, op: str, days: int | None = None
+    ) -> SettingsResult:
+        payload: dict[str, Any] = {"telegram_id": telegram_id, "update_id": update_id, "op": op}
+        if days is not None:
+            payload["days"] = days
+        data = await self._post("settings", payload)
+        status = data.get("status")
+        if status not in {"saved", "unlinked", "invalid", "not_linked"}:
+            raise WallosError(f"settings: unexpected status {status!r}")
+        days_value = data.get("reminder_days")
+        return SettingsResult(
+            status=status, reminder_days=days_value if isinstance(days_value, int) else None
         )
 
     async def _post(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:

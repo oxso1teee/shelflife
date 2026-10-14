@@ -6,8 +6,8 @@
 
 | Сервис | Что делает | Код и лицензия |
 |---|---|---|
-| `web` | сайт, база данных SQLite, вся логика записей, рассылка напоминаний (cron внутри контейнера), внутренний API для бота | `web/` — производная версия Wallos, **GPL-3.0** (`web/LICENSE.md`, `web/NOTICE.md`) |
-| `bot` | Telegram-бот: привязка (`/start`), `/add`, кнопки под напоминаниями. Своих данных не хранит, всё делает через внутренний API сайта | `bot/` — на основе telegram-reminder-bot, **MIT** (`bot/LICENSE`) |
+| `web` | сайт, база данных SQLite, вся логика записей, рассылка напоминаний (cron внутри контейнера), внутренний API для бота, Telegram Mini App (`/tma/`) | `web/` — производная версия Wallos, **GPL-3.0** (`web/LICENSE.md`, `web/NOTICE.md`) |
+| `bot` | Telegram-бот: привязка, главная, записи с карточками, добавление, «Скоро», расходы, настройки, кнопки под напоминаниями. Своих данных не хранит, всё делает через внутренний API сайта | `bot/` — на основе telegram-reminder-bot, **MIT** (`bot/LICENSE`) |
 | `caddy` | HTTPS-вход для сайта: сертификат Let's Encrypt, закрывает внутренний API снаружи | образ `caddy:2.10-alpine` |
 
 Все данные лежат в каталоге `.data/`: база `.data/db/wallos.db` и загруженные логотипы `.data/logos/`.
@@ -19,7 +19,7 @@
 - Telegram-бот, созданный в [@BotFather](https://t.me/BotFather):
   1. `/newbot` — получите **токен** и **имя** бота (без `@`).
   2. `/setdomain` — выберите бота и укажите домен сайта. Без этого не работает кнопка «Войти через Telegram».
-  3. Меню команд (`/add`, `/help`, `/start`, `/cancel`) и описание бота задавать в BotFather не нужно: бот устанавливает их сам при каждом запуске.
+  3. Меню команд и описание бота задавать в BotFather не нужно: бот устанавливает их сам при каждом запуске. Аватар, имя и Mini App настраиваются вручную — см. [branding/telegram/README.md](branding/telegram/README.md).
 
 ## 3. Установка
 
@@ -47,6 +47,7 @@ docker compose logs -f web    # дождитесь строки "Updated next pa
 | `SHELFLIFE_DOMAIN` | домен сайта |
 | `SHELFLIFE_NOTIFY_HOUR` | с какого часа (по `TZ`) отправлять новые напоминания, по умолчанию 9 |
 | `WEB_PORT` | локальный порт сайта, доступный только с самого сервера (по умолчанию 8282) |
+| `SHELFLIFE_MINIAPP_URL` | необязательно: публичный адрес Mini App, `https://<домен>/tma/index.php` (раздел 13) |
 
 ## 4. Первые шаги на сайте
 
@@ -116,6 +117,29 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
   && .venv/bin/python -m pytest -q && .venv/bin/ruff check . && .venv/bin/black --check .
 ```
 
+PHP-тесты считают ошибкой любое предупреждение PHP: на сервере оно попадает в ответ API и ломает JSON.
+
+Приёмочный прогон (`scripts/acceptance.py`) и проверка Mini App в браузере (`scripts/tma_ui_check.py`, нужны Playwright и Chrome) работают с базой и **запускаются только на отдельном стенде** — копии проекта с отдельным именем Compose-проекта, портом и пустой `.data/`, с тестовым (ненастоящим) токеном бота:
+
+```bash
+mkdir /tmp/shelflife-stand
+git ls-files -co --exclude-standard -z | tar --null -T - -cf - | tar -x -C /tmp/shelflife-stand
+cd /tmp/shelflife-stand
+cat > .env <<'ENV'
+COMPOSE_PROJECT_NAME=shelflife-acceptance
+WEB_PORT=8285
+TZ=Europe/Moscow
+TELEGRAM_BOT_USERNAME=ShelfLifeAcceptBot
+TELEGRAM_BOT_TOKEN=123456:not-a-real-token
+SHELFLIFE_SERVICE_KEY=<openssl rand -hex 32>
+ENV
+printf 'services:\n  web:\n    image: shelflife-web:acceptance\n' > compose.override.yaml
+docker compose up -d --build web
+WEB_PORT=8285 /path/to/shelflife/bot/.venv/bin/python scripts/acceptance.py
+WEB_PORT=8285 python3 scripts/tma_ui_check.py --out /tmp/tma-shots
+docker compose down                     # стенд и его .data/ потом можно удалить
+```
+
 ## 10. Диагностика
 
 | Симптом | Проверить |
@@ -126,6 +150,10 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 | виджет пишет «Bot domain invalid» | в BotFather `/setdomain` для этого бота не указан домен сайта |
 | напоминания не приходят | привязан ли Telegram в профиле; включены ли уведомления в записи; не раньше ли `SHELFLIFE_NOTIFY_HOUR`; журнал `sendtelegram.log` |
 | в логе при первом запуске `database table is locked ... 000016.php` | известное безвредное предупреждение исходной миграции Wallos на новой базе; на работу не влияет |
+| в боте нет кнопок «Открыть приложение» | задан ли `SHELFLIFE_MINIAPP_URL` и начинается ли он с `https://` (иначе в `docker compose logs bot` будет предупреждение); перезапущен ли бот |
+| Mini App: «Telegram не подтвердил вход» | сайт и бот должны использовать один и тот же `TELEGRAM_BOT_TOKEN` (подпись проверяется им) |
+| Mini App: «Сессия устарела» | данные запуска старше суток — закрыть и открыть приложение заново |
+| Mini App: «Приложение не настроено» | у контейнера `web` не задан `TELEGRAM_BOT_TOKEN` |
 
 ## 11. Безопасность
 
@@ -133,6 +161,7 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - Сайт публикуется только через Caddy; порт `web` открыт лишь на `127.0.0.1`. Внутренний API (`/api/internal/`) снаружи закрыт, в контейнере доступен только из частной сети Docker и только с сервисным ключом.
 - Вход по паролю ограничен: 5 ошибок за 15 минут блокируют имя пользователя на это время. Доступна двухфакторная защита (TOTP) — она действует и при входе через Telegram.
 - Журналы доступа не сохраняют параметры запросов (в них может быть API-ключ Wallos).
+- Mini App (`/api/tma/app.php`) узнаёт пользователя только по `initData`, подписанным Telegram: сервер проверяет подпись токеном бота (HMAC-SHA256, как в документации Telegram), отклоняет данные старше суток и повторяющиеся поля. `initDataUnsafe` и любые id из тела запроса для входа не используются; cookie не нужны. Telegram-аккаунт без привязки получает только «не привязан». Чужие записи для Mini App не существуют (те же проверки владельца, что у сайта и бота). Каждое изменение несёт `request_id` и применяется один раз. Страница `/tma/` загружает скрипты только с сайта и `telegram.org` (Content-Security-Policy).
 
 ## 12. Лицензии
 
@@ -140,3 +169,15 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 - **Бот (`bot/`) — MIT**: при копировании сохраняется уведомление об авторских правах из `bot/LICENSE`.
 - Лицензии встроенных библиотек перечислены в `web/NOTICE.md`. Условия использования ApexCharts (графики на странице статистики) нужно проверить отдельно перед передачей продукта третьим лицам.
 - Юридические вопросы передачи прав согласовываются с юристом.
+
+## 13. Telegram Mini App
+
+Mini App — тот же ShelfLife внутри Telegram: главная, записи с поиском и фильтрами, карточка записи (продлить, напомнить завтра, отменить, вернуть, изменить, удалить), добавление и редактирование, «Скоро», расходы, настройки напоминаний, отвязка. Страница — `web/tma/`, API — `web/api/tma/app.php`, операции — `web/includes/shelflife/webapp_api.php`.
+
+1. Нужен сайт на публичном HTTPS-домене (разделы 2–3). По `http://` и локальному адресу Telegram Mini App не откроет.
+2. Проверьте в браузере `https://<домен>/tma/index.php`: должна появиться страница «Откройте ShelfLife в Telegram».
+3. В `.env`: `SHELFLIFE_MINIAPP_URL=https://<домен>/tma/index.php`, затем `docker compose up -d bot`.
+4. Бот поставит кнопку меню «ShelfLife», а на главной, в помощи и в карточках записей появятся кнопки приложения. Без этой переменной бот работает как прежде, без кнопок приложения, а кнопку меню не меняет.
+
+Аватар, тексты для @BotFather и проверка в настоящем Telegram описаны в [branding/telegram/README.md](branding/telegram/README.md).
+

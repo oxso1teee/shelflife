@@ -36,6 +36,7 @@ from zoneinfo import ZoneInfo
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "bot"))
 
+from bot import screens  # noqa: E402
 from bot.handlers import add as add_handlers  # noqa: E402
 from bot.handlers import callbacks, common  # noqa: E402
 from bot.keyboards import ItemActionCB  # noqa: E402
@@ -702,6 +703,75 @@ async def main() -> None:
             sql("SELECT inactive FROM subscriptions WHERE name='Витамины'"),
             "1",
         )
+
+        print("\n# Sections, record cards and settings (bot)")
+        overview = await client.overview(555)
+        names = [item.name for item in overview.items]
+        check(
+            "the overview holds anna's records only",
+            ("Netflix" in names, "Секрет Бориса" in names),
+            (True, False),
+        )
+        check("an unlinked Telegram account gets no overview", await client.overview(888), None)
+        check(
+            "the home screen greets anna",
+            screens.home(overview, None).text.split("\n")[2],
+            "Здравствуйте, Анна!",
+        )
+        milk_item = next(item for item in overview.items if item.name == "Молоко")
+        check(
+            "the card shows the date the button moved it to",
+            f"Дата: {renewed.strftime('%d.%m.%Y')}" in screens.card(overview, milk_item, None).text,
+            True,
+        )
+        days_sql = f"SELECT days FROM notification_settings WHERE user_id={uid['anna']}"
+        update = next_update()
+        result = await client.settings(
+            telegram_id=555, update_id=update.update_id, op="reminder_days", days=3
+        )
+        check("the default reminder is saved", (result.status, sql(days_sql)), ("saved", "3"))
+        result = await client.settings(
+            telegram_id=555, update_id=next_update().update_id, op="reminder_days", days=9
+        )
+        check(
+            "a value the website does not offer is refused",
+            (result.status, sql(days_sql)),
+            ("invalid", "3"),
+        )
+        await client.settings(
+            telegram_id=555, update_id=next_update().update_id, op="reminder_days", days=1
+        )
+        message = TgMessage(TgUser(555))
+        due = today + timedelta(days=20)
+        await add_handlers.add_from_line(
+            message, f"Временная {due.strftime('%d.%m.%Y')}", client, next_update()
+        )
+        temp_id = int(sql("SELECT id FROM subscriptions WHERE name='Временная'"))
+        result = await client.act(
+            telegram_id=777, update_id=next_update().update_id, subscription_id=temp_id,
+            action="delete", expected_due=due.isoformat(),
+        )  # fmt: skip
+        check("another Telegram user cannot delete it", result.status, "not_linked")
+        result = await client.act(
+            telegram_id=555, update_id=next_update().update_id, subscription_id=temp_id,
+            action="delete", expected_due=due.isoformat(),
+        )  # fmt: skip
+        check(
+            "«Удалить» deletes the record",
+            (result.status, sql("SELECT COUNT(*) FROM subscriptions WHERE name='Временная'")),
+            ("done", "0"),
+        )
+        vitamins_due = sql("SELECT next_payment FROM subscriptions WHERE name='Витамины'")
+        result = await client.act(
+            telegram_id=555, update_id=next_update().update_id,
+            subscription_id=int(sql("SELECT id FROM subscriptions WHERE name='Витамины'")),
+            action="reactivate", expected_due=vitamins_due,
+        )  # fmt: skip
+        check(
+            "«Вернуть в работу» reactivates a cancelled record",
+            (result.status, sql("SELECT inactive FROM subscriptions WHERE name='Витамины'")),
+            ("done", "0"),
+        )
     finally:
         await client.close()
 
@@ -725,6 +795,168 @@ async def main() -> None:
     check(
         "data signed for another bot is refused", location, "login.php?error=telegram_auth_failed"
     )
+
+    print("\n# Mini App")
+    with Browser().opener.open(BASE + "/tma/index.php", timeout=30) as response:
+        page = response.read().decode()
+        csp = response.headers.get("Content-Security-Policy", "")
+    check("the Mini App page is served", "app.js?v" in page, True)
+    check(
+        "its scripts come only from the site and Telegram",
+        "script-src 'self' https://telegram.org;" in csp,
+        True,
+    )
+
+    def init_data(telegram_id: int, bot_token: str = token, age: int = 0) -> str:
+        fields = {
+            "auth_date": str(int(time.time()) - age),
+            "query_id": "AAHacceptance",
+            "user": json.dumps(
+                {"id": telegram_id, "first_name": "Anna", "username": "anna_tg"},
+                separators=(",", ":"),
+            ),
+        }
+        check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+        secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+        fields["hash"] = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
+        return urllib.parse.urlencode(fields)
+
+    def tma(init: str | None, body: dict | None = None) -> tuple[int, dict]:
+        headers = {} if init is None else {"X-Telegram-Init-Data": init}
+        status, _, text = Browser().request(
+            "/api/tma/app.php", headers=headers, json_body=body or {"op": "state"}
+        )
+        return status, json.loads(text)
+
+    anna_init = init_data(555)
+    check("a GET is refused", Browser().request("/api/tma/app.php")[0], 405)
+    check("without init data", tma(None), (401, {"status": "unauthorized", "reason": "missing"}))
+    check(
+        "init data with a changed user",
+        tma(anna_init.replace("%22id%22%3A555", "%22id%22%3A556"))[1].get("reason"),
+        "bad_hash",
+    )
+    check(
+        "init data signed for another bot",
+        tma(init_data(555, "654321:another-bot"))[1].get("reason"),
+        "bad_hash",
+    )
+    check(
+        "init data older than a day", tma(init_data(555, age=2 * 86400))[1].get("reason"), "expired"
+    )
+    check("an unlinked Telegram account", tma(init_data(999))[1]["status"], "not_linked")
+    status, body = tma(anna_init)
+    app_names = [r["name"] for r in body["state"]["records"]]
+    check(
+        "the linked account sees its own records only",
+        (status, body["status"], "Netflix" in app_names, "Секрет Бориса" in app_names),
+        (200, "ok", True, False),
+    )
+    create = {
+        "op": "save",
+        "request_id": "acceptance-create-1",
+        "record": {
+            "kind": "maintenance", "name": "Котёл, ТО", "price": "3000",
+            "currency_id": int(sql(f"SELECT main_currency FROM user WHERE id={uid['anna']}")),
+            "cycle": 4, "frequency": 1, "next_payment": d(40),
+        },
+    }  # fmt: skip
+    _, first = tma(anna_init, create)
+    _, again = tma(anna_init, create)
+    check(
+        "a record added in the app, once for a repeated request",
+        (first["status"], again.get("id") == first.get("id"),
+         sql("SELECT COUNT(*) FROM subscriptions WHERE name='Котёл, ТО'")),
+        ("saved", True, "1"),
+    )  # fmt: skip
+    _, edited = tma(
+        anna_init,
+        {
+            "op": "save",
+            "request_id": "acceptance-edit-1",
+            "record": {"id": first["id"], "name": "Котёл — ТО"},
+        },
+    )
+    check(
+        "edited in the app, other fields kept",
+        (
+            edited["status"],
+            sql(
+                f"SELECT name || '|' || price || '|' || cycle FROM subscriptions WHERE id={first['id']}"
+            ),
+        ),
+        ("saved", "Котёл — ТО|3000.0|4"),
+    )
+    secret_id = sql("SELECT id FROM subscriptions WHERE name='Секрет Бориса'")
+    secret_due = sql(f"SELECT next_payment FROM subscriptions WHERE id={secret_id}")
+    _, foreign_edit = tma(
+        anna_init,
+        {
+            "op": "save",
+            "request_id": "acceptance-edit-2",
+            "record": {"id": int(secret_id), "name": "Взлом"},
+        },
+    )
+    _, foreign_delete = tma(
+        anna_init,
+        {
+            "op": "act",
+            "request_id": "acceptance-act-1",
+            "id": int(secret_id),
+            "action": "delete",
+            "expected_due": secret_due,
+        },
+    )
+    check(
+        "another account's record can be neither edited nor deleted",
+        (foreign_edit["status"], foreign_delete["status"],
+         sql(f"SELECT name FROM subscriptions WHERE id={secret_id}")),
+        ("not_found", "not_found", "Секрет Бориса"),
+    )  # fmt: skip
+    netflix_id = sql(f"SELECT id FROM subscriptions WHERE name='Netflix' AND user_id={uid['anna']}")
+    netflix_due = sql(f"SELECT next_payment FROM subscriptions WHERE id={netflix_id}")
+    _, renewed_body = tma(
+        anna_init,
+        {
+            "op": "act",
+            "request_id": "acceptance-act-2",
+            "id": int(netflix_id),
+            "action": "renew",
+            "expected_due": netflix_due,
+        },
+    )
+    check(
+        "«Продлить» in the app moves the date",
+        (
+            renewed_body["status"],
+            sql(f"SELECT next_payment FROM subscriptions WHERE id={netflix_id}") > netflix_due,
+        ),
+        ("done", True),
+    )
+    _, saved_days = tma(
+        anna_init, {"op": "settings", "request_id": "acceptance-set-1", "reminder_days": 4}
+    )
+    check(
+        "the default reminder from the app", (saved_days["status"], sql(days_sql)), ("saved", "4")
+    )
+    tma(anna_init, {"op": "settings", "request_id": "acceptance-set-2", "reminder_days": 1})
+    check(
+        "a change without a request id is refused",
+        tma(anna_init, {"op": "act"})[1]["status"],
+        "invalid",
+    )
+    check(
+        "unlinking needs a confirmation",
+        tma(anna_init, {"op": "unlink", "request_id": "acceptance-unlink-1"})[1]["status"],
+        "invalid",
+    )
+    check(
+        "unlinking from the app",
+        (tma(anna_init, {"op": "unlink", "request_id": "acceptance-unlink-2", "confirm": True})[1]["status"],
+         sql(f"SELECT IFNULL(telegram_id, 'none') FROM user WHERE id={uid['anna']}"),
+         tma(anna_init)[1]["status"]),
+        ("unlinked", "none", "not_linked"),
+    )  # fmt: skip
 
     print("\n# Forged requests and password guessing")
     records = sql("SELECT COUNT(*) FROM subscriptions")

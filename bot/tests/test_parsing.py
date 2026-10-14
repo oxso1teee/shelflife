@@ -6,7 +6,14 @@ from datetime import date
 
 import pytest
 
-from bot.parsing import ParseError, QuickAdd, parse_quick_add
+from bot.parsing import (
+    ParseError,
+    QuickAdd,
+    has_date,
+    parse_amount,
+    parse_date,
+    parse_quick_add,
+)
 
 TODAY = date(2026, 10, 14)
 
@@ -150,3 +157,84 @@ class TestDeterminism:
     def test_today_is_injected(self):
         assert parse_quick_add("X 01.01 1", date(2026, 12, 31)).due == date(2027, 1, 1)
         assert parse_quick_add("X 01.01 1", date(2027, 1, 1)).due == date(2027, 1, 1)
+
+
+# --- the single-value readers used by the step-by-step /add ---------------------
+
+TODAY_14_10 = date(2026, 10, 14)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Spotify 15.11 500rub", True),
+        ("Витамины 2026-11-20", True),
+        ("Spotify", False),
+        ("Spotify 500rub", False),
+        ("", False),
+    ],
+)
+def test_has_date_spots_a_date_like_token(text, expected):
+    assert has_date(text) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("15.11", date(2026, 11, 15)),
+        ("14.10", date(2026, 10, 14)),  # today is allowed
+        ("13.10", date(2027, 10, 13)),  # passed this year: the next one
+        ("  01.12.2026 ", date(2026, 12, 1)),
+        ("01.12.27", date(2027, 12, 1)),
+        ("2026-12-01", date(2026, 12, 1)),
+    ],
+)
+def test_parse_date_reads_one_date(text, expected):
+    assert parse_date(text, TODAY_14_10) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("завтра", "Не понял дату"),
+        ("15.11 500", "Не понял дату"),
+        ("31.02.2027", "Такой даты нет"),
+        ("01.01.2020", "уже прошла"),
+        ("", "Не понял дату"),
+    ],
+)
+def test_parse_date_explains_what_is_wrong(text, message):
+    with pytest.raises(ParseError, match=message):
+        parse_date(text, TODAY_14_10)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("500", ("500", None)),
+        ("500rub", ("500", "RUB")),
+        ("500 руб", ("500", "RUB")),
+        ("9,99$", ("9.99", "USD")),
+        ("$9.99", ("9.99", "USD")),
+        ("10€", ("10", "EUR")),
+        ("15 gbp", ("15", "GBP")),
+    ],
+)
+def test_parse_amount_reads_the_price_and_currency(text, expected):
+    assert parse_amount(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("сто", "Не понял сумму"),
+        ("0", "больше нуля"),
+        ("500 рублей денег", "Не понял сумму"),
+        ("500$ usd", "Не понял сумму"),
+        ("500 тугриков", "Не знаю валюту"),
+        ("", "Не понял сумму"),
+    ],
+)
+def test_parse_amount_explains_what_is_wrong(text, message):
+    with pytest.raises(ParseError, match=message):
+        parse_amount(text)
