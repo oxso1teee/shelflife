@@ -13,8 +13,13 @@ through that app's internal API.
 | `/start <token>` (the link from the profile page) | links the Telegram account to the website account; the token works once, for 15 minutes |
 | `/start` | says whether the account is linked and how to link it |
 | `/add Spotify 15.11 500rub` | creates a record; `/add` alone asks for the line; `/cancel` leaves |
-| buttons under a reminder: «Продлено», «Отменено», «Напомнить позже» | renews the record to its next date, makes it inactive, or moves the reminder to tomorrow — once, and only for the record's owner |
-| `/help` | usage |
+| buttons under a reminder: «Продлено на …», «Отменено», «Напомнить позже» | renews the record to its next date, makes it inactive, or moves the reminder to tomorrow — once, and only for the record's owner; the reminder then shows the outcome instead of the buttons |
+| `/help` | usage, with examples |
+| any other command, plain text, an outdated button | a short hint (private chats only) |
+
+At start the bot publishes its command menu and description (`bot/menu.py`).
+Every message follows one style (`bot/texts.py`): dates DD.MM.YYYY, amounts
+like "1 500 ₽", and the same record card as the reminders the web app sends.
 
 Reminders themselves are sent by the web app's cron job; the bot handles the
 button presses that come back.
@@ -47,6 +52,9 @@ bot/states.py              FSM state for /add without arguments
 bot/handlers/common.py     /start, /help
 bot/handlers/add.py        /add, /cancel
 bot/handlers/callbacks.py  reminder buttons
+bot/handlers/fallback.py   unknown commands, plain text, outdated buttons (registered last)
+bot/texts.py               the writing style: dates, amounts, periods, the record card
+bot/menu.py                command menu and description, set at start
 ```
 
 ## Tests

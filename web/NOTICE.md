@@ -29,6 +29,7 @@ Base revision: Wallos `cc9677a` (release 5.8.3, 2026-10-01).
 | 2026-10-14 | Static files are versioned by their contents, not by the Wallos version alone: `$assetVersion` (`includes/shelflife/asset_version.php`, `includes/version.php`, hash written at build time by the `Dockerfile`) is the cache-buster of every stylesheet and script and the name of the service worker's static cache (`service-worker.php`); a page newer than the installed worker gets its files from the network. |
 | 2026-10-14 | Subscription list on phones: rows no longer overflow the screen (two lines below 560px, the name shortened with an ellipsis), the days left sit under the date, and the toolbar above the list fits 320px screens (`styles/styles.css`). |
 | 2026-10-14 | A Telegram update id the bot's internal API has already processed is answered again only to the Telegram account it was processed for; the same id from another account is refused without the stored response, which names the record (`includes/shelflife/bot_actions.php`, documented in `api/internal/telegram/item_add.php` and `item_action.php`). |
+| 2026-10-14 | Telegram reminders are written as a card in the bot's style: what is due and when, the record's name, kind, period and category ("no category" left out), date and amount; long names are shortened, amounts use no-break spaces, and the "renewed" button names the period it renews for (`includes/shelflife/notifications.php`). |
 
 The list is extended with every change made for ShelfLife.
 

@@ -15,38 +15,40 @@ from datetime import date
 from aiogram import Router
 from aiogram.types import CallbackQuery, Message, Update
 
+from bot import texts
 from bot.keyboards import ACTIONS, ItemActionCB, due_from_callback
 from bot.wallos_client import ActionResult, WallosClient, WallosError
 
 log = logging.getLogger(__name__)
 router = Router()
 
-UNAVAILABLE = "Сервис временно недоступен. Попробуйте позже."
-UNKNOWN_BUTTON = "Неизвестная кнопка."
+UNAVAILABLE = texts.UNAVAILABLE
+UNKNOWN_BUTTON = "Эта кнопка больше не работает."
 
 STATUS_TEXTS = {
-    "stale": "Уже обработано: дата этой записи изменилась.",
-    "inactive": "Эта запись уже отключена.",
-    "not_recurring": "Эту запись нельзя продлить.",
-    "not_found": "Запись не найдена.",
-    "not_linked": "Этот Telegram не привязан к аккаунту ShelfLife.",
+    "stale": "Уже обработано: дата записи изменилась.",
+    "inactive": "Запись уже отключена — напоминаний по ней не будет.",
+    "not_recurring": "Эту запись нельзя продлить. Измените дату на сайте.",
+    "not_found": "Запись не найдена — возможно, её удалили на сайте.",
+    "not_linked": "Этот Telegram не привязан к аккаунту ShelfLife. Привяжите его в профиле на сайте.",
     "invalid": UNKNOWN_BUTTON,
 }
 
 
-def _format_date(value: str) -> str:
-    return date.fromisoformat(value).strftime("%d.%m.%Y")
-
-
-def outcome_text(result: ActionResult) -> str:
-    """What the user is told after a press."""
-    if result.status == "done" and result.record is not None:
+def outcome_text(result: ActionResult, today: date | None = None) -> str:
+    """What the user is told after a press: what happened and, if nothing did, why."""
+    record = result.record
+    if result.status == "done" and record is not None:
         if result.action == "renew":
-            return f"Продлено. Следующая дата: {_format_date(result.record.next_payment)}."
+            return f"✅ Продлено. Следующая дата — {texts.format_date(record.next_payment)}."
         if result.action == "cancel":
-            return "Отменено. Напоминаний по этой записи больше не будет."
-        if result.action == "snooze" and result.record.snoozed_until:
-            return f"Хорошо, напомню {_format_date(result.record.snoozed_until)}."
+            return "❌ Отменено. Напоминаний по этой записи больше не будет."
+        if result.action == "snooze" and record.snoozed_until:
+            until = date.fromisoformat(record.snoozed_until)
+            when = texts.relative(until, today or texts.today())
+            return f"⏰ Напомню {when}, {texts.format_date(until)}."
+    if result.status == "stale" and record is not None:
+        return f"Уже обработано: следующая дата — {texts.format_date(record.next_payment)}."
     return STATUS_TEXTS.get(result.status, UNKNOWN_BUTTON)
 
 

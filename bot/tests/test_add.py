@@ -47,6 +47,9 @@ class FakeState:
     async def set_state(self, state) -> None:
         self.state = state
 
+    async def get_state(self):
+        return self.state
+
     async def clear(self) -> None:
         self.state = None
 
@@ -105,10 +108,12 @@ async def test_the_specification_example_creates_a_subscription():
         }
     ]
     assert message.answers == [
-        "Добавлено: <b>Spotify</b>\n"
-        "Подписка · 500 ₽ · каждый месяц\n"
-        "Дата: 15.11.2026 (через 32 дня)\n\n"
-        "Изменить или удалить можно на сайте."
+        "✅ Запись добавлена\n\n"
+        "<b>Spotify</b>\n"
+        "Подписка · каждый месяц\n"
+        "Дата: 15.11.2026 — через 32 дня\n"
+        "Сумма: 500\u00a0₽\n\n"
+        "Изменить или удалить её можно на сайте."
     ]
 
 
@@ -124,8 +129,9 @@ async def test_a_shelf_life_date_is_described_as_such():
         FakeUpdate(),
     )
 
-    assert "Срок годности · разово" in message.answers[0]
-    assert "(завтра)" in message.answers[0]
+    card = message.answers[0].split("\n")
+    assert card[3:5] == ["Срок годности", "Дата: 15.10.2026 — завтра"]
+    assert "Сумма" not in message.answers[0], "no amount for a shelf-life date"
 
 
 async def test_the_reply_escapes_the_name():
@@ -149,8 +155,8 @@ async def test_a_parse_error_is_explained_without_asking_wallos():
     await add.cmd_add(message, command("Spotify 31.02 500"), FakeState(), wallos, FakeUpdate())
 
     assert wallos.calls == []
-    assert message.answers[0].startswith("Такой даты нет: 31.02.")
-    assert "/add Spotify 15.11 500rub" in message.answers[0]
+    assert message.answers == [f"⚠️ Такой даты нет: 31.02.\n\n{add.USAGE}"]
+    assert message.answers[0].count("/add Spotify 15.11 500rub") == 1, "one example, not two"
 
 
 async def test_add_without_arguments_asks_for_the_line_then_adds_it():
@@ -167,7 +173,7 @@ async def test_add_without_arguments_asks_for_the_line_then_adds_it():
     assert state.state is None
     assert wallos.calls[0]["name"] == "Spotify"
     assert wallos.calls[0]["update_id"] == 4243
-    assert line.answers[0].startswith("Добавлено")
+    assert line.answers[0].startswith("✅ Запись добавлена")
 
 
 async def test_cancel_leaves_the_dialog():
@@ -178,7 +184,31 @@ async def test_cancel_leaves_the_dialog():
     await add.cmd_cancel(message, state)
 
     assert state.state is None
-    assert message.answers == ["Отменено."]
+    assert message.answers == ["Ввод отменён."]
+
+
+async def test_cancel_with_nothing_to_cancel_says_so():
+    message = FakeMessage()
+
+    await add.cmd_cancel(message, FakeState())
+
+    assert message.answers == ["Сейчас нечего отменять. Добавить запись — /add"]
+
+
+async def test_a_long_name_is_shortened_in_the_reply():
+    message = FakeMessage()
+    long_name = "Очень длинное название " * 5
+
+    await add.cmd_add(
+        message,
+        command("x 15.11 1"),
+        FakeState(),
+        FakeWallos(AddResult("created", record(name=long_name))),
+        FakeUpdate(),
+    )
+
+    name = message.answers[0].split("<b>")[1].split("</b>")[0]
+    assert len(name) == 80 and name.endswith("…")
 
 
 @pytest.mark.parametrize(
@@ -186,12 +216,17 @@ async def test_cancel_leaves_the_dialog():
     [
         (AddResult("not_linked"), add.NOT_LINKED),
         # an update id already processed for another account
-        (AddResult("invalid"), "Не удалось добавить: проверьте данные."),
+        (AddResult("invalid"), add.REFUSED),
         (
             AddResult("invalid", field="currency", message="unknown_currency"),
-            "Валюта RUB не добавлена в ваш аккаунт. "
+            "⚠️ Валюты RUB нет в вашем аккаунте. "
             "Добавьте её на сайте в настройках или укажите другую.",
         ),
+        (
+            AddResult("invalid", field="next_payment", message="x"),
+            add.REFUSED_FIELDS["next_payment"],
+        ),
+        (AddResult("invalid", field="frequency", message="x"), add.REFUSED),
     ],
 )
 async def test_refusals_from_wallos_are_explained(result, expected):
@@ -221,11 +256,3 @@ async def test_a_message_without_a_sender_is_ignored():
     await add.cmd_add(message, command("Spotify 15.11 500rub"), FakeState(), wallos, FakeUpdate())
 
     assert wallos.calls == [] and message.answers == []
-
-
-@pytest.mark.parametrize(
-    ("cycle", "frequency", "expected"),
-    [(5, 1, "разово"), (1, 1, "каждый день"), (4, 1, "каждый год"), (3, 3, "каждые 3 мес.")],
-)
-def test_period_wording(cycle, frequency, expected):
-    assert add.period_text(record(cycle=cycle, frequency=frequency)) == expected

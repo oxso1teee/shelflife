@@ -592,8 +592,13 @@ async def main() -> None:
         await add_handlers.add_from_line(message, "Spotify 15.11 500rub", client, next_update())
         check(
             "the specification example",
-            message.answers[0].split("\n")[:2],
-            ["Добавлено: <b>Spotify</b>", "Подписка · 500 ₽ · каждый месяц"],
+            [line for i, line in enumerate(message.answers[0].split("\n")) if i in (0, 2, 3, 5)],
+            [
+                "✅ Запись добавлена",
+                "<b>Spotify</b>",
+                "Подписка · каждый месяц",
+                "Сумма: 500\u00a0₽",
+            ],
         )
         tomorrow = (today + timedelta(days=1)).strftime("%d.%m.%Y")
         update = next_update()
@@ -635,9 +640,13 @@ async def main() -> None:
             "reminders go to the linked Telegram account", {m["chat"] for m in run["sent"]}, {555}
         )
         check(
-            "the shelf-life reminder text",
-            milk["text"] if milk else None,
-            f"Срок годности <b>Молоко</b> истекает завтра ({tomorrow}).",
+            "the shelf-life reminder card",
+            (
+                [line for i, line in enumerate(milk["text"].split("\n")) if i in (0, 2, 4)]
+                if milk
+                else None
+            ),
+            ["🔔 Срок годности истекает завтра", "<b>Молоко</b>", f"Дата: {tomorrow}"],
         )
         check("an overdue shelf-life date is still announced", vitamins is not None, True)
         check("a second run sends nothing again", run["second"]["sent"], 0)
@@ -655,13 +664,13 @@ async def main() -> None:
         check(
             "«Напомнить позже»",
             await press(client, buttons["Напомнить позже"], 555),
-            f"Хорошо, напомню {tomorrow}.",
+            f"⏰ Напомню завтра, {tomorrow}.",
         )
         renewed = plus_month(today + timedelta(days=1))
         check(
             "«Продлено на месяц» moves the date a month on",
             await press(client, buttons["Продлено на месяц"], 555),
-            f"Продлено. Следующая дата: {renewed.strftime('%d.%m.%Y')}.",
+            f"✅ Продлено. Следующая дата — {renewed.strftime('%d.%m.%Y')}.",
         )
         check(
             "the website shows the new date",
@@ -671,7 +680,7 @@ async def main() -> None:
         check(
             "pressing it again does nothing",
             await press(client, buttons["Продлено на месяц"], 555),
-            "Уже обработано: дата этой записи изменилась.",
+            f"Уже обработано: следующая дата — {renewed.strftime('%d.%m.%Y')}.",
         )
         vitamin_buttons = {
             b["text"]: b["callback_data"]
@@ -681,12 +690,12 @@ async def main() -> None:
         check(
             "another Telegram user cannot press anna's button",
             await press(client, vitamin_buttons["Отменено"], 777),
-            "Этот Telegram не привязан к аккаунту ShelfLife.",
+            "Этот Telegram не привязан к аккаунту ShelfLife. Привяжите его в профиле на сайте.",
         )
         check(
             "«Отменено»",
             await press(client, vitamin_buttons["Отменено"], 555),
-            "Отменено. Напоминаний по этой записи больше не будет.",
+            "❌ Отменено. Напоминаний по этой записи больше не будет.",
         )
         check(
             "the record is inactive on the website",

@@ -10,6 +10,7 @@ from aiogram import Router
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import Message
 
+from bot import texts
 from bot.wallos_client import WallosClient, WallosError
 
 log = logging.getLogger(__name__)
@@ -19,33 +20,65 @@ router = Router()
 _TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
 
 NOT_LINKED = (
-    "Привет! Я бот ShelfLife: напоминаю о платежах по подпискам, сроках годности "
-    "и обслуживании техники.\n\n"
-    "Чтобы получать уведомления, привяжите аккаунт: на сайте откройте "
-    "<b>Профиль → Telegram-бот</b>, нажмите «Привязать Telegram» и перейдите по ссылке."
+    "👋 Привет! Я бот <b>ShelfLife</b>.\n\n"
+    "Заранее напоминаю о платежах по подпискам, сроках годности и обслуживании "
+    "техники. Под каждым напоминанием — кнопки: продлить, отменить, напомнить позже.\n\n"
+    "<b>Чтобы начать, привяжите аккаунт:</b>\n"
+    "1. Войдите на сайт ShelfLife.\n"
+    "2. Откройте <b>Профиль → Telegram-бот</b>.\n"
+    "3. Нажмите «Привязать Telegram» и перейдите по ссылке.\n\n"
+    "Подсказка по командам — /help"
 )
 
 HELP_TEXT = (
-    "<b>Что умеет бот</b>\n\n"
-    "• присылает напоминания о предстоящих платежах, сроках годности и обслуживании;\n"
-    "• под каждым напоминанием — кнопки «Продлено», «Отменено», «Напомнить позже»;\n"
-    "• /add — быстро добавить запись: <code>/add Spotify 15.11 500rub</code>.\n\n"
-    "<b>Привязка</b>: на сайте <b>Профиль → Telegram-бот</b> → «Привязать Telegram».\n\n"
-    "Команды: /add, /cancel, /start, /help"
+    "<b>ShelfLife в Telegram</b>\n\n"
+    "<b>Добавить запись</b> — одной строкой:\n"
+    "<code>/add Название ДД.ММ [сумма] [период]</code>\n"
+    "• <code>/add Spotify 15.11 500rub</code> — подписка, каждый месяц\n"
+    "• <code>/add Netflix 01.12.2026 9.99$ год</code> — подписка, раз в год\n"
+    "• <code>/add Витамины 20.11</code> — срок годности\n"
+    "• <code>/add Фильтр 10.01 то 3мес</code> — обслуживание каждые 3 месяца\n\n"
+    "<b>Напоминания</b> приходят заранее. Кнопки под ними:\n"
+    "• «Продлено» — перенести дату на следующий период;\n"
+    "• «Отменено» — больше не напоминать об этой записи;\n"
+    "• «Напомнить позже» — напомнить завтра.\n\n"
+    "Изменить или удалить запись можно на сайте.\n\n"
+    "/add — добавить запись\n"
+    "/cancel — отменить ввод\n"
+    "/start — статус привязки"
 )
 
 LINK_RESULTS = {
     "invalid_token": (
-        "Ссылка недействительна: её срок истёк или она уже использована. "
-        "Получите новую в профиле на сайте."
+        "❌ Ссылка не сработала: она устарела (действует 15 минут) или уже использована.\n\n"
+        "Получите новую на сайте: <b>Профиль → Telegram-бот</b> → «Привязать Telegram»."
     ),
     "telegram_taken": (
-        "Этот Telegram уже привязан к другому аккаунту ShelfLife. "
-        "Отвяжите его там и попробуйте ещё раз."
+        "❌ Этот Telegram уже привязан к другому аккаунту ShelfLife.\n\n"
+        "Отвяжите его в профиле того аккаунта и откройте ссылку ещё раз."
     ),
 }
 
-UNAVAILABLE = "Сервис временно недоступен. Попробуйте позже."
+UNAVAILABLE = texts.UNAVAILABLE
+
+
+def linked_text(username: str | None) -> str:
+    name = html.escape(username or "")
+    return (
+        f"✅ Аккаунт <b>{name}</b> привязан.\n\n"
+        "Напоминания из ShelfLife будут приходить в этот чат.\n"
+        f"Добавить запись: {texts.ADD_EXAMPLE}\n"
+        "Все возможности — /help"
+    )
+
+
+def already_linked_text(username: str | None) -> str:
+    name = html.escape(username or "")
+    return (
+        f"👋 Аккаунт <b>{name}</b> привязан — напоминания приходят сюда.\n\n"
+        f"Добавить запись: {texts.ADD_EXAMPLE}\n"
+        "Все возможности — /help"
+    )
 
 
 @router.message(CommandStart(deep_link=True))
@@ -66,11 +99,7 @@ async def cmd_start_link(message: Message, command: CommandObject, wallos: Wallo
         return
 
     if result.status == "linked":
-        name = html.escape(result.username or "")
-        await message.answer(
-            f"Готово! Аккаунт <b>{name}</b> привязан. "
-            "Сюда будут приходить напоминания из ShelfLife.\n\n/help — что умеет бот."
-        )
+        await message.answer(linked_text(result.username))
     else:
         await message.answer(LINK_RESULTS[result.status])
 
@@ -88,10 +117,7 @@ async def cmd_start(message: Message, wallos: WallosClient) -> None:
         return
 
     if account.linked:
-        name = html.escape(account.username or "")
-        await message.answer(
-            f"Аккаунт <b>{name}</b> уже привязан. Напоминания будут приходить сюда.\n\n/help — что умеет бот."
-        )
+        await message.answer(already_linked_text(account.username))
     else:
         await message.answer(NOT_LINKED)
 

@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import html
 import logging
-import os
-from datetime import date, datetime
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from datetime import date
 
 from aiogram import Router
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, Update
 
+from bot import texts
 from bot.parsing import ParseError, QuickAdd, parse_quick_add
 from bot.states import AddItem
 from bot.wallos_client import AddResult, Record, WallosClient, WallosError
@@ -28,75 +27,35 @@ router = Router()
 
 USAGE = (
     "Формат: <code>/add Название ДД.ММ [сумма]</code>\n"
-    "Примеры:\n"
-    "<code>/add Spotify 15.11 500rub</code> — подписка, каждый месяц\n"
-    "<code>/add Netflix 01.12.2026 9.99$ год</code> — подписка, раз в год\n"
-    "<code>/add Витамины 20.11</code> — срок годности\n"
-    "<code>/add Фильтр для воды 10.01 то 3мес</code> — обслуживание каждые 3 месяца"
+    f"Например: {texts.ADD_EXAMPLE}\n"
+    "Все варианты — /help"
 )
-ASK_LINE = "Что добавить? Напишите одной строкой.\n\n" + USAGE + "\n\n/cancel — отмена."
-UNAVAILABLE = "Сервис временно недоступен. Попробуйте позже."
-NOT_LINKED = (
-    "Сначала привяжите аккаунт: на сайте <b>Профиль → Telegram-бот</b> → «Привязать Telegram»."
+ASK_LINE = (
+    "Что добавить? Напишите одной строкой название, дату и для подписки — сумму.\n"
+    "Например: <code>Spotify 15.11 500rub</code>\n\n"
+    "/cancel — отменить"
 )
+UNAVAILABLE = texts.UNAVAILABLE
+NOT_LINKED = texts.NOT_LINKED
 
-KIND_NAMES = {"subscription": "Подписка", "expiry": "Срок годности", "maintenance": "Обслуживание"}
-CURRENCY_SYMBOLS = {"RUB": "₽", "USD": "$", "EUR": "€", "KZT": "₸"}
-PERIOD_ONE = {1: "каждый день", 2: "каждую неделю", 3: "каждый месяц", 4: "каждый год"}
-PERIOD_UNIT = {1: "дн.", 2: "нед.", 3: "мес.", 4: "г."}
+# What the web app can refuse in /add, by field (api/internal/telegram/item_add.php).
+REFUSED_FIELDS = {
+    "price": f"⚠️ Для подписки нужна сумма, например: {texts.ADD_EXAMPLE}",
+    "next_payment": "⚠️ Дата не подходит. Укажите её как ДД.ММ или ДД.ММ.ГГГГ.",
+    "name": "⚠️ Название не подходит: оно пустое или слишком длинное.",
+}
+REFUSED = "⚠️ Не удалось добавить запись. Проверьте строку или добавьте запись на сайте."
 
 
 def today_in_app_timezone() -> date:
-    try:
-        zone = ZoneInfo(os.environ.get("TZ") or "UTC")
-    except (ZoneInfoNotFoundError, ValueError):
-        zone = ZoneInfo("UTC")
-    return datetime.now(zone).date()
-
-
-def ru_days(n: int) -> str:
-    n = abs(n)
-    if n % 10 == 1 and n % 100 != 11:
-        return f"{n} день"
-    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
-        return f"{n} дня"
-    return f"{n} дней"
-
-
-def days_left_text(due: date, today: date) -> str:
-    days = (due - today).days
-    if days == 0:
-        return "сегодня"
-    if days == 1:
-        return "завтра"
-    return f"через {ru_days(days)}" if days > 0 else f"просрочено на {ru_days(days)}"
-
-
-def price_text(record: Record) -> str:
-    amount = f"{record.price:.2f}".replace(".", ",").removesuffix(",00")
-    symbol = CURRENCY_SYMBOLS.get(record.currency or "", record.currency or "")
-    return f"{amount} {symbol}".strip()
-
-
-def period_text(record: Record) -> str:
-    if record.cycle == 5:
-        return "разово"
-    if record.frequency == 1:
-        return PERIOD_ONE.get(record.cycle, "")
-    return f"каждые {record.frequency} {PERIOD_UNIT.get(record.cycle, '')}".strip()
+    return texts.today()
 
 
 def created_text(record: Record, today: date) -> str:
-    due = date.fromisoformat(record.next_payment)
-    parts = [KIND_NAMES.get(record.kind, record.kind)]
-    if record.kind == "subscription" or record.price > 0:
-        parts.append(price_text(record))
-    parts.append(period_text(record))
     return (
-        f"Добавлено: <b>{html.escape(record.name)}</b>\n"
-        f"{' · '.join(part for part in parts if part)}\n"
-        f"Дата: {due.strftime('%d.%m.%Y')} ({days_left_text(due, today)})\n\n"
-        "Изменить или удалить можно на сайте."
+        "✅ Запись добавлена\n\n"
+        f"{texts.record_card(record, today)}\n\n"
+        "Изменить или удалить её можно на сайте."
     )
 
 
@@ -105,12 +64,10 @@ def refused_text(result: AddResult, parsed: QuickAdd) -> str:
         return NOT_LINKED
     if result.field == "currency":
         return (
-            f"Валюта {html.escape(parsed.currency or '')} не добавлена в ваш аккаунт. "
+            f"⚠️ Валюты {html.escape(parsed.currency or '')} нет в вашем аккаунте. "
             "Добавьте её на сайте в настройках или укажите другую."
         )
-    if result.field == "price":
-        return "Для подписки нужна сумма: <code>/add Spotify 15.11 500rub</code>"
-    return "Не удалось добавить: " + html.escape(result.message or "проверьте данные.")
+    return REFUSED_FIELDS.get(result.field or "", REFUSED)
 
 
 async def add_from_line(
@@ -123,7 +80,7 @@ async def add_from_line(
     try:
         parsed = parse_quick_add(line, today)
     except ParseError as exc:
-        await message.answer(f"{html.escape(str(exc))}\n\n{USAGE}")
+        await message.answer(f"⚠️ {html.escape(str(exc))}\n\n{USAGE}")
         return
 
     try:
@@ -168,8 +125,11 @@ async def cmd_add(
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    if await state.get_state() is None:
+        await message.answer("Сейчас нечего отменять. Добавить запись — /add")
+        return
     await state.clear()
-    await message.answer("Отменено.")
+    await message.answer("Ввод отменён.")
 
 
 @router.message(AddItem.waiting_for_line)

@@ -129,7 +129,7 @@ wallos_test('a sent reminder names the record and carries the three buttons', fu
     assert_same(['queued' => 1, 'sent' => 1, 'pending' => 0, 'failed' => 0, 'cancelled' => 0], $counts, 'one queued, one sent');
     $message = $sender->sent[0];
     assert_same(555, $message['chat'], 'to the linked Telegram account');
-    assert_same('Завтра спишется оплата за <b>Tom &amp; &lt;Jerry&gt;</b> (9,99 $) — 15.11.2026.', $message['text'], 'the text');
+    assert_same("🔔 Оплата завтра\n\n<b>Tom &amp; &lt;Jerry&gt;</b>\nПодписка · каждый месяц\nДата: 15.11.2026\nСумма: 9,99\u{00A0}$", $message['text'], 'the text');
     $buttons = array_merge(...$message['markup']['inline_keyboard']);
     assert_same(['Продлено на месяц', 'Отменено', 'Напомнить позже'], array_column($buttons, 'text'), 'the buttons');
     assert_same(["a:$id:20261115:r", "a:$id:20261115:c", "a:$id:20261115:s"], array_column($buttons, 'callback_data'), 'callback data for the bot');
@@ -143,12 +143,59 @@ wallos_test('a sent reminder names the record and carries the three buttons', fu
 
 wallos_test('texts for shelf-life, maintenance and overdue records', function () {
     $record = ['id' => 1, 'name' => 'Витамины', 'next_payment' => '2026-11-15', 'kind' => 'expiry', 'cycle' => 5, 'frequency' => 1, 'price' => 0];
+    $text = fn(array $overrides, $symbol, $today, $category = null) => shelflife_notify_message($overrides + $record, $symbol, $today, $category)['text'];
 
-    assert_same('Срок годности <b>Витамины</b> истекает через 3 дня (15.11.2026).', shelflife_notify_message($record, '', '2026-11-12')['text'], 'expiry ahead');
-    assert_same('Срок годности <b>Витамины</b> истёк 2 дня назад (15.11.2026).', shelflife_notify_message($record, '', '2026-11-17')['text'], 'expiry passed');
-    assert_same('Обслуживание <b>Фильтр</b> — сегодня (15.11.2026).', shelflife_notify_message(['name' => 'Фильтр', 'kind' => 'maintenance', 'cycle' => 3, 'frequency' => 3] + $record, '', '2026-11-15')['text'], 'maintenance today');
-    assert_same('Через 21 день спишется оплата за <b>Netflix</b> (500 ₽) — 15.11.2026.', shelflife_notify_message(['name' => 'Netflix', 'kind' => 'subscription', 'cycle' => 3, 'frequency' => 1, 'price' => 500] + $record, '₽', '2026-10-25')['text'], 'subscription, 21 days');
-    assert_same('Продлено', shelflife_notify_message(['kind' => 'subscription', 'cycle' => 4] + $record, '', '2026-11-14')['reply_markup']['inline_keyboard'][0][0]['text'], 'a yearly record says just "renewed"');
+    assert_same("🔔 Срок годности истекает через 3 дня\n\n<b>Витамины</b>\nСрок годности\nДата: 15.11.2026", $text([], '', '2026-11-12'), 'expiry ahead: no amount, no period');
+    assert_same("⚠️ Срок годности истёк 2 дня назад\n\n<b>Витамины</b>\nСрок годности\nДата: 15.11.2026", $text([], '', '2026-11-17'), 'expiry passed');
+    assert_same("🔔 Обслуживание сегодня\n\n<b>Фильтр</b>\nОбслуживание · каждые 3 месяца\nДата: 15.11.2026", $text(['name' => 'Фильтр', 'kind' => 'maintenance', 'cycle' => 3, 'frequency' => 3], '', '2026-11-15'), 'maintenance today');
+    assert_same("⚠️ Обслуживание просрочено на 1 день\n\n<b>Фильтр</b>\nОбслуживание · каждые 3 месяца\nДата: 15.11.2026\nСумма: 1\u{00A0}500\u{00A0}₽", $text(['name' => 'Фильтр', 'kind' => 'maintenance', 'cycle' => 3, 'frequency' => 3, 'price' => 1500], '₽', '2026-11-16'), 'maintenance overdue, with its cost');
+    assert_same("🔔 Оплата через 21 день\n\n<b>Netflix</b>\nПодписка · каждый месяц · Кино &amp; ТВ\nДата: 15.11.2026\nСумма: 500\u{00A0}₽", $text(['name' => 'Netflix', 'kind' => 'subscription', 'cycle' => 3, 'frequency' => 1, 'price' => 500], '₽', '2026-10-25', 'Кино & ТВ'), 'subscription with its category, escaped');
+    assert_same("⚠️ Оплата просрочена на 2 дня\n\n<b>Аренда</b>\nПодписка · каждый месяц\nДата: 15.11.2026\nСумма: 30\u{00A0}000,50\u{00A0}₽", $text(['name' => 'Аренда', 'kind' => 'subscription', 'cycle' => 3, 'frequency' => 1, 'price' => 30000.5], '₽', '2026-11-17'), 'overdue payment, thousands and kopecks');
+    assert_same("🔔 Оплата завтра\n\n<b>Курс</b>\nПодписка · разово\nДата: 15.11.2026\nСумма: 990", $text(['name' => 'Курс', 'kind' => 'subscription', 'price' => 990], '', '2026-11-14'), 'a one-time purchase, a currency without a symbol');
+});
+
+wallos_test('a long name is shortened in the reminder', function () {
+    $long = str_repeat('Очень длинное название ', 10);
+    $text = shelflife_notify_message(['id' => 1, 'name' => $long, 'next_payment' => '2026-11-15', 'kind' => 'expiry', 'cycle' => 5, 'frequency' => 1, 'price' => 0], '', '2026-11-14')['text'];
+    $name = explode('</b>', explode('<b>', $text)[1])[0];
+
+    assert_same(80, mb_strlen($name, 'UTF-8'), 'cut to 80 characters');
+    assert_true(str_ends_with($name, '…'), 'with an ellipsis');
+});
+
+wallos_test('the "renewed" button names the period it renews for', function () {
+    $label = fn($cycle, $frequency) => shelflife_notify_message(['id' => 1, 'name' => 'X', 'next_payment' => '2026-11-15', 'kind' => 'subscription', 'cycle' => $cycle, 'frequency' => $frequency, 'price' => 1], '', '2026-11-14')['reply_markup']['inline_keyboard'][0][0]['text'];
+
+    assert_same('Продлено на месяц', $label(SHELFLIFE_CYCLE_MONTHS, 1), 'monthly, as in the specification');
+    assert_same('Продлено на 3 месяца', $label(SHELFLIFE_CYCLE_MONTHS, 3), 'every 3 months');
+    assert_same('Продлено на год', $label(SHELFLIFE_CYCLE_YEARS, 1), 'yearly');
+    assert_same('Продлено на 5 лет', $label(SHELFLIFE_CYCLE_YEARS, 5), 'every 5 years');
+    assert_same('Продлено на неделю', $label(SHELFLIFE_CYCLE_WEEKS, 1), 'weekly');
+    assert_same('Продлено на 2 дня', $label(SHELFLIFE_CYCLE_DAYS, 2), 'every 2 days');
+    assert_same('Продлено на месяц', $label(SHELFLIFE_CYCLE_ONE_TIME, 1), 'a one-time record moves by a month');
+});
+
+wallos_test('a reminder shows the record\'s category, but not "no category"', function () {
+    $db = shelflife_notify_test_setup();
+    $db->exec("UPDATE user SET language = 'ru' WHERE id = 1");
+    $category = fn($name) => ($db->exec("INSERT INTO categories (name, \"order\", user_id) VALUES ('" . SQLite3::escapeString($name) . "', 9, 1)") ? $db->lastInsertRowID() : null);
+    $music = shelflife_notify_test_record($db, ['name' => 'Spotify', 'category_id' => $category('Музыка &amp; подкасты')]);
+    $none = shelflife_notify_test_record($db, ['name' => 'Netflix', 'category_id' => $category(default_no_category_name('ru'))]);
+    $english = shelflife_notify_test_record($db, ['name' => 'Disney', 'category_id' => $category('No category')]);
+    $sender = shelflife_notify_test_sender();
+
+    shelflife_notify_run($db, $sender, '2026-11-14', 1000);
+    $texts = [];
+    foreach ($sender->sent as $message) {
+        $texts[explode('</b>', explode('<b>', $message['text'])[1])[0]] = explode("\n", $message['text'])[3];
+    }
+
+    assert_same('Подписка · каждый месяц · Музыка &amp; подкасты', $texts['Spotify'], 'the category, as the website shows it, escaped once');
+    assert_same('Подписка · каждый месяц', $texts['Netflix'], 'the account\'s own "no category" is left out');
+    assert_same('Подписка · каждый месяц', $texts['Disney'], 'and so is Wallos\'s English default');
+    assert_true($music !== $none && $none !== $english, 'three records');
+
+    $db->close();
 });
 
 wallos_test('a reminder for a due date that changed is not sent', function () {

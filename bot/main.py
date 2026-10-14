@@ -11,6 +11,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from dotenv import load_dotenv
 
+from bot import menu
 from bot.handlers import setup as setup_handlers
 from bot.wallos_client import WallosClient
 
@@ -46,6 +47,7 @@ async def main() -> None:
     setup_handlers(dp, wallos)
 
     try:
+        await menu.publish(bot)
         await dp.start_polling(bot)
     finally:
         await wallos.close()

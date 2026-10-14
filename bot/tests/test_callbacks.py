@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 
 import pytest
 from aiogram.types import Chat, Message
 
+from bot import texts
 from bot.handlers import callbacks
 from bot.keyboards import ItemActionCB, due_from_callback
 from bot.wallos_client import ActionResult, Record, WallosError
@@ -81,6 +82,11 @@ class FakeWallos:
         return self.result
 
 
+@pytest.fixture(autouse=True)
+def fixed_today(monkeypatch):
+    monkeypatch.setattr(texts, "today", lambda: date(2026, 10, 13))
+
+
 @pytest.fixture
 def reminder(monkeypatch):
     """A real aiogram Message whose edit_text is recorded instead of sent."""
@@ -117,9 +123,9 @@ async def test_renew_is_applied_with_the_due_date_from_the_button(reminder):
             "expected_due": "2026-10-14",
         }
     ]
-    assert query.answers == [("Продлено. Следующая дата: 14.11.2026.", False)]
+    assert query.answers == [("✅ Продлено. Следующая дата — 14.11.2026.", False)]
     text, markup = edits[0]
-    assert text.endswith("<i>Продлено. Следующая дата: 14.11.2026.</i>")
+    assert text.endswith("\n\n<i>✅ Продлено. Следующая дата — 14.11.2026.</i>")
     assert markup is None, "the buttons are removed"
 
 
@@ -129,17 +135,27 @@ async def test_renew_is_applied_with_the_due_date_from_the_button(reminder):
         (
             "a:5:20261014:c",
             ActionResult("done", "cancel", record(inactive=True)),
-            "Отменено. Напоминаний по этой записи больше не будет.",
+            "❌ Отменено. Напоминаний по этой записи больше не будет.",
         ),
         (
             "a:5:20261014:s",
             ActionResult("done", "snooze", record(snoozed_until="2026-10-14")),
-            "Хорошо, напомню 14.10.2026.",
+            "⏰ Напомню завтра, 14.10.2026.",
         ),
         (
             "a:5:20261014:r",
             ActionResult("stale", "renew", record()),
-            "Уже обработано: дата этой записи изменилась.",
+            "Уже обработано: следующая дата — 14.11.2026.",
+        ),
+        (
+            "a:5:20261014:c",
+            ActionResult("inactive", "cancel", record(inactive=True)),
+            "Запись уже отключена — напоминаний по ней не будет.",
+        ),
+        (
+            "a:5:20261014:r",
+            ActionResult("not_found"),
+            "Запись не найдена — возможно, её удалили на сайте.",
         ),
     ],
 )
@@ -166,7 +182,9 @@ async def test_a_foreign_or_unlinked_press_changes_nothing_on_screen(reminder):
         FakeUpdate(),
     )
 
-    assert query.answers == [("Этот Telegram не привязан к аккаунту ShelfLife.", False)]
+    assert query.answers == [
+        ("Этот Telegram не привязан к аккаунту ShelfLife. Привяжите его в профиле на сайте.", False)
+    ]
     assert edits == [], "the reminder keeps its buttons"
 
 
@@ -220,3 +238,23 @@ async def test_a_press_without_a_sender_is_ignored():
 
     assert wallos.calls == []
     assert query.answers == [(None, False)]
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        (ActionResult("stale", "renew", None), "Уже обработано: дата записи изменилась."),
+        (
+            ActionResult("not_recurring", "renew", record()),
+            "Эту запись нельзя продлить. Измените дату на сайте.",
+        ),
+        (ActionResult("surprise"), callbacks.UNKNOWN_BUTTON),
+    ],
+)
+def test_outcomes_without_a_record_or_unknown(result, expected):
+    assert callbacks.outcome_text(result) == expected
+
+
+def test_a_snooze_further_away_names_the_days():
+    result = ActionResult("done", "snooze", record(snoozed_until="2026-10-16"))
+    assert callbacks.outcome_text(result) == "⏰ Напомню через 3 дня, 16.10.2026."

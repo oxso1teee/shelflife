@@ -58,8 +58,9 @@ async def test_a_valid_token_links_the_sender():
     await common.cmd_start_link(message, start_command(TOKEN), wallos)
 
     assert wallos.link_calls == [(TOKEN, 555, "alice_tg")]
-    assert "привязан" in message.answers[0]
-    assert "<b>alice</b>" in message.answers[0]
+    assert message.answers == [common.linked_text("alice")]
+    assert message.answers[0].startswith("✅ Аккаунт <b>alice</b> привязан.")
+    assert "/add Spotify 15.11 500rub" in message.answers[0], "the next step is shown"
 
 
 async def test_the_account_name_is_escaped():
@@ -115,7 +116,8 @@ async def test_start_without_a_token_recognises_a_linked_account():
 
     await common.cmd_start(message, FakeWallos(account=Account(linked=True, username="alice")))
 
-    assert "уже привязан" in message.answers[0]
+    assert message.answers == [common.already_linked_text("alice")]
+    assert message.answers[0].startswith("👋 Аккаунт <b>alice</b> привязан")
 
 
 async def test_a_message_without_a_sender_is_ignored():
@@ -127,3 +129,20 @@ async def test_a_message_without_a_sender_is_ignored():
 
     assert message.answers == []
     assert wallos.link_calls == []
+
+
+async def test_the_start_screen_explains_the_bot_and_the_next_step():
+    text = common.NOT_LINKED
+    assert text.startswith("👋 Привет! Я бот <b>ShelfLife</b>.")
+    assert "Профиль → Telegram-бот" in text and "«Привязать Telegram»" in text
+    assert text.endswith("/help")
+
+
+async def test_help_lists_the_commands_and_the_buttons():
+    message = FakeMessage()
+
+    await common.cmd_help(message)
+
+    assert message.answers == [common.HELP_TEXT]
+    for fragment in ("/add", "/cancel", "/start", "«Продлено»", "«Отменено»", "«Напомнить позже»"):
+        assert fragment in common.HELP_TEXT

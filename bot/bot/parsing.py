@@ -81,7 +81,7 @@ def parse_quick_add(text: str, today: date) -> QuickAdd:
     date_index, due = _find_date(tokens, today)
     name = " ".join(tokens[:date_index]).strip()
     if not name:
-        raise ParseError("Сначала название, потом дата: /add Spotify 15.11 500rub")
+        raise ParseError("Сначала название, потом дата.")
     if len(name) > MAX_NAME_LENGTH:
         raise ParseError(f"Название слишком длинное (до {MAX_NAME_LENGTH} символов).")
 
@@ -117,14 +117,14 @@ def parse_quick_add(text: str, today: date) -> QuickAdd:
                 if currency is None:
                     raise ParseError(f"Не знаю валюту «{unit}». Например: 500rub, 9.99$, 10€.")
         else:
-            raise ParseError(f"Не понял «{tokens[date_index + 1 + i]}».")
+            raise ParseError(f"Не понял «{tokens[date_index + 1 + i]}»: это не сумма и не период.")
         i += 1
 
     if kind is None:
         # A price means something paid for; a bare date is a shelf-life date.
         kind = "subscription" if price is not None else "expiry"
     if kind == "subscription" and price is None:
-        raise ParseError("Для подписки нужна сумма: /add Spotify 15.11 500rub")
+        raise ParseError("Для подписки нужна сумма, например 500rub.")
 
     return QuickAdd(
         name=name,
@@ -152,7 +152,7 @@ def _find_date(tokens: list[str], today: date) -> tuple[int, date]:
     if impossible:
         raise ParseError(impossible)
     if _DOT_RE.match(tokens[0]) or _ISO_RE.match(tokens[0]):
-        raise ParseError("Сначала название, потом дата: /add Spotify 15.11 500rub")
+        raise ParseError("Сначала название, потом дата.")
     raise ParseError("Не нашёл дату. Формат: ДД.ММ или ДД.ММ.ГГГГ, например 15.11.")
 
 

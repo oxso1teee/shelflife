@@ -28,6 +28,7 @@
 require_once __DIR__ . '/dates.php';
 require_once __DIR__ . '/subscription_service.php';
 require_once __DIR__ . '/status.php';
+require_once __DIR__ . '/../default_names.php';
 
 const SHELFLIFE_NOTIFY_MAX_ATTEMPTS = 5;
 const SHELFLIFE_NOTIFY_STALE_LOCK_SECONDS = 600;
@@ -146,29 +147,140 @@ function shelflife_notify_finish(SQLite3 $db, $id, $status, array $fields = [])
     $stmt->execute();
 }
 
+/**
+ * "1 500 ₽", "9,99 $" (no-break spaces); just the amount without a symbol.
+ */
 function shelflife_notify_price($price, $symbol)
 {
-    $formatted = number_format((float) $price, 2, ',', ' ');
+    $formatted = number_format((float) $price, 2, ',', "\u{00A0}");
     $formatted = preg_replace('/,00$/', '', $formatted);
 
-    return $formatted . ' ' . $symbol;
+    return $symbol === '' ? $formatted : $formatted . "\u{00A0}" . $symbol;
 }
 
 /**
- * The reminder text and its buttons.
+ * Russian plural form: 1 месяц, 2 месяца, 5 месяцев.
+ */
+function shelflife_ru_plural($n, $one, $few, $many)
+{
+    $n = abs((int) $n);
+    $mod10 = $n % 10;
+    $mod100 = $n % 100;
+    if ($mod10 === 1 && $mod100 !== 11) {
+        return $one;
+    }
+    if ($mod10 >= 2 && $mod10 <= 4 && ($mod100 < 12 || $mod100 > 14)) {
+        return $few;
+    }
+
+    return $many;
+}
+
+/**
+ * "каждый месяц", "каждые 3 месяца"; null for a one-time record.
+ */
+function shelflife_notify_period($cycle, $frequency)
+{
+    $units = [
+        SHELFLIFE_CYCLE_DAYS => ['каждый день', 'день', 'дня', 'дней'],
+        SHELFLIFE_CYCLE_WEEKS => ['каждую неделю', 'неделю', 'недели', 'недель'],
+        SHELFLIFE_CYCLE_MONTHS => ['каждый месяц', 'месяц', 'месяца', 'месяцев'],
+        SHELFLIFE_CYCLE_YEARS => ['каждый год', 'год', 'года', 'лет'],
+    ];
+    $unit = $units[(int) $cycle] ?? null;
+    if ($unit === null) {
+        return null;
+    }
+    $n = max(1, (int) $frequency);
+
+    return $n === 1 ? $unit[0] : 'каждые ' . $n . ' ' . shelflife_ru_plural($n, $unit[1], $unit[2], $unit[3]);
+}
+
+/**
+ * The "renewed" button names the period it renews for. A one-time record is
+ * moved by a month (shelflife_subscription_renew() with $allowOneTime).
+ */
+function shelflife_notify_renew_label($cycle, $frequency)
+{
+    $units = [
+        SHELFLIFE_CYCLE_DAYS => ['день', 'дня', 'дней'],
+        SHELFLIFE_CYCLE_WEEKS => ['неделю', 'недели', 'недель'],
+        SHELFLIFE_CYCLE_MONTHS => ['месяц', 'месяца', 'месяцев'],
+        SHELFLIFE_CYCLE_YEARS => ['год', 'года', 'лет'],
+    ];
+    $unit = $units[(int) $cycle] ?? null;
+    $n = max(1, (int) $frequency);
+    if ($unit === null || $n === 1) {
+        return 'Продлено на ' . ($unit === null ? 'месяц' : $unit[0]);
+    }
+
+    return 'Продлено на ' . $n . ' ' . shelflife_ru_plural($n, $unit[0], $unit[1], $unit[2]);
+}
+
+/**
+ * Plain text cut to $max characters with an ellipsis.
+ */
+function shelflife_notify_shorten($text, $max)
+{
+    $text = trim((string) $text);
+
+    return mb_strlen($text, 'UTF-8') > $max ? rtrim(mb_substr($text, 0, $max - 1, 'UTF-8')) . '…' : $text;
+}
+
+/**
+ * The record's category for the reminder, or null when it has none: the
+ * account's "no category" (in its language or Wallos's English default).
+ */
+function shelflife_notify_category(SQLite3 $db, array $record, $language)
+{
+    if (empty($record['category_id'])) {
+        return null;
+    }
+    $stmt = $db->prepare('SELECT name FROM categories WHERE id = :id AND user_id = :userId');
+    $stmt->bindValue(':id', (int) $record['category_id'], SQLITE3_INTEGER);
+    $stmt->bindValue(':userId', (int) $record['user_id'], SQLITE3_INTEGER);
+    $row = $stmt->execute()->fetchArray(SQLITE3_ASSOC);
+    if ($row === false) {
+        return null;
+    }
+    $name = trim(html_entity_decode((string) $row['name'], ENT_QUOTES, 'UTF-8'));
+    if ($name === '' || in_array($name, [default_no_category_name((string) $language), 'No category'], true)) {
+        return null;
+    }
+
+    return $name;
+}
+
+const SHELFLIFE_NOTIFY_KIND_NAMES = [
+    SHELFLIFE_KIND_SUBSCRIPTION => 'Подписка',
+    SHELFLIFE_KIND_EXPIRY => 'Срок годности',
+    SHELFLIFE_KIND_MAINTENANCE => 'Обслуживание',
+];
+
+/**
+ * The reminder text and its buttons. The same card as the bot's /add answer:
+ *
+ *   🔔 Оплата завтра
+ *
+ *   <b>Spotify</b>
+ *   Подписка · каждый месяц · Развлечения
+ *   Дата: 15.11.2026
+ *   Сумма: 500 ₽
  *
  * @param array       $record         the subscriptions row
  * @param string|null $currencySymbol symbol of the record's currency
  * @param string      $today          Y-m-d
+ * @param string|null $category       the record's category, plain text; null for none
  * @return array{text: string, reply_markup: array}
  */
-function shelflife_notify_message(array $record, $currencySymbol, $today)
+function shelflife_notify_message(array $record, $currencySymbol, $today, $category = null)
 {
-    $name = htmlspecialchars(html_entity_decode((string) $record['name'], ENT_QUOTES, 'UTF-8'), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $escape = fn($text) => htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $name = $escape(shelflife_notify_shorten(html_entity_decode((string) $record['name'], ENT_QUOTES, 'UTF-8'), 80));
     $due = $record['next_payment'];
     $daysLeft = shelflife_days_between($today, $due);
-    $dateText = (new DateTimeImmutable($due, new DateTimeZone('UTC')))->format('d.m.Y');
     $kind = $record['kind'] ?? SHELFLIFE_KIND_SUBSCRIPTION;
+    $cycle = (int) ($record['cycle'] ?? SHELFLIFE_CYCLE_MONTHS);
 
     if ($daysLeft > 1) {
         $when = 'через ' . shelflife_ru_days($daysLeft);
@@ -182,34 +294,46 @@ function shelflife_notify_message(array $record, $currencySymbol, $today)
 
     switch ($kind) {
         case SHELFLIFE_KIND_EXPIRY:
-            $text = $when === null
-                ? "Срок годности <b>$name</b> истёк " . shelflife_ru_days($daysLeft) . " назад ($dateText)."
-                : "Срок годности <b>$name</b> истекает $when ($dateText).";
+            $headline = $when === null ? 'Срок годности истёк ' . shelflife_ru_days($daysLeft) . ' назад' : 'Срок годности истекает ' . $when;
             break;
         case SHELFLIFE_KIND_MAINTENANCE:
-            $text = $when === null
-                ? "Обслуживание <b>$name</b> просрочено на " . shelflife_ru_days($daysLeft) . " ($dateText)."
-                : 'Обслуживание <b>' . $name . '</b> — ' . $when . " ($dateText).";
+            $headline = $when === null ? 'Обслуживание просрочено на ' . shelflife_ru_days($daysLeft) : 'Обслуживание ' . $when;
             break;
         default:
-            $price = (float) $record['price'] > 0 ? ' (' . htmlspecialchars(shelflife_notify_price($record['price'], (string) $currencySymbol), ENT_QUOTES, 'UTF-8') . ')' : '';
-            $text = $when === null
-                ? "Оплата за <b>$name</b>$price была " . shelflife_ru_days($daysLeft) . " назад ($dateText)."
-                : shelflife_ucfirst($when) . " спишется оплата за <b>$name</b>$price — $dateText.";
+            $kind = SHELFLIFE_KIND_SUBSCRIPTION;
+            $headline = $when === null ? 'Оплата просрочена на ' . shelflife_ru_days($daysLeft) : 'Оплата ' . $when;
     }
 
-    $renewLabel = ((int) $record['cycle'] === SHELFLIFE_CYCLE_MONTHS && (int) $record['frequency'] === 1) || (int) $record['cycle'] === SHELFLIFE_CYCLE_ONE_TIME
-        ? 'Продлено на месяц'
-        : 'Продлено';
+    $details = [SHELFLIFE_NOTIFY_KIND_NAMES[$kind]];
+    $period = shelflife_notify_period($cycle, $record['frequency'] ?? 1);
+    if ($period !== null) {
+        $details[] = $period;
+    } elseif ($kind === SHELFLIFE_KIND_SUBSCRIPTION) {
+        $details[] = 'разово';
+    }
+    if (is_string($category) && trim($category) !== '') {
+        $details[] = $escape(shelflife_notify_shorten($category, 40));
+    }
+
+    $lines = [
+        ($when === null ? '⚠️ ' : '🔔 ') . $headline,
+        '',
+        '<b>' . $name . '</b>',
+        implode(' · ', $details),
+        'Дата: ' . (new DateTimeImmutable($due, new DateTimeZone('UTC')))->format('d.m.Y'),
+    ];
+    if ((float) ($record['price'] ?? 0) > 0) {
+        $lines[] = 'Сумма: ' . $escape(shelflife_notify_price($record['price'], (string) $currencySymbol));
+    }
 
     // Read by the bot as CallbackData(prefix="a"): record id, due date, action.
     $data = fn($action) => 'a:' . (int) $record['id'] . ':' . str_replace('-', '', $due) . ':' . $action;
 
     return [
-        'text' => $text,
+        'text' => implode("\n", $lines),
         'reply_markup' => [
             'inline_keyboard' => [
-                [['text' => $renewLabel, 'callback_data' => $data('r')]],
+                [['text' => shelflife_notify_renew_label($cycle, $record['frequency'] ?? 1), 'callback_data' => $data('r')]],
                 [
                     ['text' => 'Отменено', 'callback_data' => $data('c')],
                     ['text' => 'Напомнить позже', 'callback_data' => $data('s')],
@@ -217,11 +341,6 @@ function shelflife_notify_message(array $record, $currencySymbol, $today)
             ],
         ],
     ];
-}
-
-function shelflife_ucfirst($text)
-{
-    return mb_strtoupper(mb_substr($text, 0, 1, 'UTF-8'), 'UTF-8') . mb_substr($text, 1, null, 'UTF-8');
 }
 
 /**
@@ -238,7 +357,7 @@ function shelflife_notify_deliver(SQLite3 $db, array $row, callable $send, $toda
         return 'cancelled';
     }
 
-    $user = $db->prepare('SELECT telegram_id FROM user WHERE id = :id');
+    $user = $db->prepare('SELECT telegram_id, language FROM user WHERE id = :id');
     $user->bindValue(':id', (int) $row['user_id'], SQLITE3_INTEGER);
     $userRow = $user->execute()->fetchArray(SQLITE3_ASSOC);
     if ($userRow === false || $userRow['telegram_id'] === null) {
@@ -250,7 +369,8 @@ function shelflife_notify_deliver(SQLite3 $db, array $row, callable $send, $toda
     $symbol->bindValue(':id', (int) $record['currency_id'], SQLITE3_INTEGER);
     $currency = $symbol->execute()->fetchArray(SQLITE3_ASSOC);
 
-    $message = shelflife_notify_message($record, $currency === false ? '' : $currency['symbol'], $today);
+    $category = shelflife_notify_category($db, $record, $userRow['language'] ?? 'en');
+    $message = shelflife_notify_message($record, $currency === false ? '' : $currency['symbol'], $today, $category);
     $answer = $send((int) $userRow['telegram_id'], $message['text'], $message['reply_markup']);
 
     if ($answer['ok']) {
