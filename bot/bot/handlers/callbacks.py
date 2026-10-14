@@ -25,6 +25,12 @@ router = Router()
 UNAVAILABLE = texts.UNAVAILABLE
 UNKNOWN_BUTTON = "Эта кнопка больше не работает."
 
+DONE_TEXTS = {
+    "renew": "✅ Продлено.",
+    "cancel": "❌ Отменено. Напоминаний по этой записи больше не будет.",
+    "snooze": "⏰ Хорошо, напомню позже.",
+}
+
 STATUS_TEXTS = {
     "stale": "Уже обработано: дата записи изменилась.",
     "inactive": "Запись уже отключена — напоминаний по ней не будет.",
@@ -38,15 +44,15 @@ STATUS_TEXTS = {
 def outcome_text(result: ActionResult, today: date | None = None) -> str:
     """What the user is told after a press: what happened and, if nothing did, why."""
     record = result.record
-    if result.status == "done" and record is not None:
-        if result.action == "renew":
+    if result.status == "done":
+        if result.action == "renew" and record is not None:
             return f"✅ Продлено. Следующая дата — {texts.format_date(record.next_payment)}."
-        if result.action == "cancel":
-            return "❌ Отменено. Напоминаний по этой записи больше не будет."
-        if result.action == "snooze" and record.snoozed_until:
+        if result.action == "snooze" and record is not None and record.snoozed_until:
             until = date.fromisoformat(record.snoozed_until)
             when = texts.relative(until, today or texts.today())
             return f"⏰ Напомню {when}, {texts.format_date(until)}."
+        # Done, even if the answer lacks the details: never report success as a failure.
+        return DONE_TEXTS.get(result.action or "", "✅ Готово.")
     if result.status == "stale" and record is not None:
         return f"Уже обработано: следующая дата — {texts.format_date(record.next_payment)}."
     return STATUS_TEXTS.get(result.status, UNKNOWN_BUTTON)

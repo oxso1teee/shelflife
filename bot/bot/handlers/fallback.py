@@ -1,21 +1,19 @@
 """Everything no other handler took: unknown commands, plain text, old buttons.
 
 Registered last, so /start, /help, /add (and the line it waits for) and the
-reminder buttons are matched first. Messages are answered in private chats
-only; in a group the bot stays quiet.
+reminder buttons are matched first. Like every message handler it only sees
+private chats (bot/handlers/__init__.py); in a group the bot stays quiet.
 """
 
 from __future__ import annotations
 
 from aiogram import F, Router
-from aiogram.enums import ChatType
 from aiogram.types import CallbackQuery, Message
 
 from bot import texts
 from bot.handlers.callbacks import UNKNOWN_BUTTON
 
 router = Router()
-router.message.filter(F.chat.type == ChatType.PRIVATE)
 
 UNKNOWN_COMMAND = (
     "Такой команды нет.\n\n"

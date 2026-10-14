@@ -15,7 +15,10 @@ through that app's internal API.
 | `/add Spotify 15.11 500rub` | creates a record; `/add` alone asks for the line; `/cancel` leaves |
 | buttons under a reminder: «Продлено на …», «Отменено», «Напомнить позже» | renews the record to its next date, makes it inactive, or moves the reminder to tomorrow — once, and only for the record's owner; the reminder then shows the outcome instead of the buttons |
 | `/help` | usage, with examples |
-| any other command, plain text, an outdated button | a short hint (private chats only) |
+| any other command, plain text, an outdated button | a short hint |
+
+Messages are answered in private chats only: in a group the bot stays quiet,
+so it never shows a linked account or its records to other members.
 
 At start the bot publishes its command menu and description (`bot/menu.py`).
 Every message follows one style (`bot/texts.py`): dates DD.MM.YYYY, amounts

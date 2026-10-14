@@ -258,3 +258,16 @@ def test_outcomes_without_a_record_or_unknown(result, expected):
 def test_a_snooze_further_away_names_the_days():
     result = ActionResult("done", "snooze", record(snoozed_until="2026-10-16"))
     assert callbacks.outcome_text(result) == "⏰ Напомню через 3 дня, 16.10.2026."
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("renew", "✅ Продлено."),
+        ("cancel", "❌ Отменено. Напоминаний по этой записи больше не будет."),
+        ("snooze", "⏰ Хорошо, напомню позже."),
+        (None, "✅ Готово."),
+    ],
+)
+def test_a_done_action_without_details_is_still_reported_as_done(action, expected):
+    assert callbacks.outcome_text(ActionResult("done", action, None)) == expected

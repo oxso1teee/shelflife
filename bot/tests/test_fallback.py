@@ -5,10 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from aiogram import Dispatcher
 from aiogram.types import Chat, Message, User
 
-from bot.handlers import callbacks, fallback, setup
+from bot.handlers import callbacks, fallback
 
 
 @dataclass
@@ -57,13 +56,11 @@ async def test_an_old_button_is_answered_so_the_client_stops_waiting():
     assert query.answers == [callbacks.UNKNOWN_BUTTON]
 
 
-async def test_messages_are_answered_in_private_chats_only():
-    private, _ = await fallback.router.message.check_root_filters(telegram_message("private", "hi"))
-    group, _ = await fallback.router.message.check_root_filters(telegram_message("group", "hi"))
+async def test_messages_are_answered_in_private_chats_only(dispatcher):
+    private, _ = await dispatcher.message.check_root_filters(telegram_message("private", "hi"))
+    group, _ = await dispatcher.message.check_root_filters(telegram_message("group", "hi"))
     assert (private, group) == (True, False)
 
 
-def test_the_fallback_router_is_registered_last():
-    dp = Dispatcher()
-    setup(dp, wallos=object())
-    assert dp.sub_routers[-1] is fallback.router
+def test_the_fallback_router_is_registered_last(dispatcher):
+    assert dispatcher.sub_routers[-1] is fallback.router
