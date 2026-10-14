@@ -1,122 +1,58 @@
-# telegram-reminder-bot
+# ShelfLife Telegram bot
 
-[![CI](https://github.com/AlexDreamien/telegram-reminder-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/AlexDreamien/telegram-reminder-bot/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
+The Telegram side of ShelfLife, built on
+[telegram-reminder-bot](https://github.com/AlexDreamien/telegram-reminder-bot) (MIT).
+It is a thin adapter: accounts, records, dates and reminders live in the
+ShelfLife web app (a Wallos fork, `../web`), and the bot reaches them only
+through that app's internal API.
 
-A personal Telegram reminder bot. Set one-off or recurring reminders through a
-clean inline-button menu, and the bot delivers them on time — even across
-restarts. Built with aiogram 3, APScheduler, and SQLite.
+## What it does
 
-> _Screenshot of the conversation goes here once the bot is running._
->
-> ![Screenshot placeholder](docs/screenshot.png)
+| In Telegram | What happens |
+|---|---|
+| `/start <token>` (the link from the profile page) | links the Telegram account to the website account; the token works once, for 15 minutes |
+| `/start` | says whether the account is linked and how to link it |
+| `/add Spotify 15.11 500rub` | creates a record; `/add` alone asks for the line; `/cancel` leaves |
+| buttons under a reminder: «Продлено», «Отменено», «Напомнить позже» | renews the record to its next date, makes it inactive, or moves the reminder to tomorrow — once, and only for the record's owner |
+| `/help` | usage |
 
-## Features
+Reminders themselves are sent by the web app's cron job; the bot handles the
+button presses that come back.
 
-- **Inline menu UI** — add, list, and delete reminders without typing commands.
-- **Flexible time input**:
-  - Relative — `in 5 minutes`, `in 2 hours`, `in 1 day`
-  - Day-anchored — `today 18:00`, `tomorrow 09:30`
-  - Absolute — `2026-05-14 18:30`, `14.05.2026 18:30`
-- **Recurrence** — one-off, daily, or weekly.
-- **Pagination** for users with many reminders.
-- **Survives restarts** — every active reminder is re-scheduled from SQLite on
-  startup; missed recurring slots are fast-forwarded so you get one
-  notification, not a backlog.
-- **Tested core** — 65 unit tests cover the time parser, persistence layer,
-  recurrence math, and pagination.
-
-## Installation
-
-```bash
-git clone https://github.com/AlexDreamien/telegram-reminder-bot.git
-cd telegram-reminder-bot
-
-python -m venv .venv
-.venv\Scripts\activate              # Windows
-# source .venv/bin/activate         # macOS / Linux
-
-pip install -r requirements.txt
-cp .env.example .env                # then edit .env and set BOT_TOKEN
-python main.py
-```
-
-Obtain `BOT_TOKEN` from [@BotFather](https://t.me/BotFather) by sending
-`/newbot` and following the prompts.
-
-## Usage
-
-1. Send `/start` to your bot. The main menu appears with three buttons:
-   _Add reminder_, _My reminders_, _Help_.
-2. **Add reminder** opens a three-step dialog:
-   1. Send the reminder text.
-   2. Send the time (any format from the Features list).
-   3. Pick the recurrence: one-off, daily, or weekly.
-3. **My reminders** lists active reminders, paginated. Tap one to view details
-   or delete.
-4. **Help** (or `/help`) prints the full reference inside Telegram.
-
-## Architecture
-
-```
-main.py              Entry point: load .env, wire bot/db/scheduler, start polling.
-bot/parsing.py       Time-expression parser (pure logic, fully unit-tested).
-bot/db.py            SQLite reminder store: add / list / delete / reschedule.
-bot/scheduler.py     APScheduler wrapper: schedules jobs, restores from DB,
-                     fast-forwards missed recurrences.
-bot/keyboards.py     Inline keyboards and CallbackData factories.
-bot/states.py        FSM states for the add-reminder dialog.
-bot/handlers/        Routers split by responsibility:
-  common.py            /start, /help, menu navigation
-  add.py               Add-reminder FSM dialog
-  manage.py            List, view, delete reminders
-```
-
-The core logic — parsing, persistence, scheduling math, pagination — is kept
-free of aiogram so it can be tested in isolation. Telegram-facing code is a
-thin layer on top.
-
-## Tech stack
-
-- Python 3.11+
-- [aiogram 3](https://docs.aiogram.dev/) — Telegram bot framework
-- [APScheduler 3](https://apscheduler.readthedocs.io/) — async job scheduling
-- SQLite (stdlib `sqlite3`) — persistent storage
-- `python-dotenv` — configuration
-- pytest, ruff, black — quality
-
-## Testing & CI
-
-```bash
-pip install -r requirements-dev.txt
-pytest                  # 65 tests
-ruff check .            # lint
-black --check .         # formatting
-```
-
-GitHub Actions runs the same three checks on every push and pull request,
-across Python 3.11, 3.12, and 3.13 — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+`/add` grammar: `<name> <date> [<amount>[<currency>]] [words]` — date `DD.MM`,
+`DD.MM.YY`, `DD.MM.YYYY` or `YYYY-MM-DD` (without a year: the next such date);
+amount like `500rub`, `500 руб`, `9.99$`, `$9.99`, `10€`; words `год`, `ежемесячно`,
+`неделя`, `то` (maintenance), `срок` (shelf life), `3мес` (every 3 months). With
+an amount the record is a subscription, without one a shelf-life date.
 
 ## Configuration
 
-Environment variables (see `.env.example`):
+| Variable | |
+|---|---|
+| `BOT_TOKEN` | token from @BotFather |
+| `WALLOS_INTERNAL_URL` | base URL of the internal API, e.g. `http://web/api/internal/telegram` |
+| `SHELFLIFE_SERVICE_KEY` | shared secret with the web app, at least 32 characters |
+| `TZ` | time zone for "today" in `/add`, e.g. `Europe/Moscow` |
 
-| Variable    | Description                                  | Default         |
-| ----------- | -------------------------------------------- | --------------- |
-| `BOT_TOKEN` | Telegram bot token from @BotFather (required) | _empty_         |
-| `DB_PATH`   | Path to the SQLite database file              | `reminders.db`  |
-| `TZ`        | IANA timezone (reserved for future use)       | `UTC`           |
+In the ShelfLife deployment these come from the top-level `.env` through `compose.yaml`.
 
-Times are interpreted and stored in UTC; the bot currently displays times as
-UTC. Multi-user timezone support is intentionally out of scope.
+## Layout
 
-## Out of scope
+```
+main.py                    entry point: config, client, routers, polling
+bot/wallos_client.py       client of the web app's internal API (replaces the original bot's SQLite store)
+bot/parsing.py             /add parser (adapted from the original time parser)
+bot/keyboards.py           reminder button format shared with the web app; pagination
+bot/states.py              FSM state for /add without arguments
+bot/handlers/common.py     /start, /help
+bot/handlers/add.py        /add, /cancel
+bot/handlers/callbacks.py  reminder buttons
+```
 
-By design, this bot does not implement payments, multilingual replies, an
-admin panel, inline mode, or third-party integrations. The codebase is meant
-to be small and easy to read.
+## Tests
 
-## License
-
-[MIT](LICENSE)
+```bash
+pip install -r requirements-dev.txt
+pytest
+ruff check . && black --check .
+```

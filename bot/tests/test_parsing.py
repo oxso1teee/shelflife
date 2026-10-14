@@ -1,132 +1,152 @@
+"""The /add parser (bot/parsing.py), in the shape of the original reminder-bot tests."""
+
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import date
 
 import pytest
 
-from bot.parsing import TimeParseError, parse_time
+from bot.parsing import ParseError, QuickAdd, parse_quick_add
 
-NOW = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-
-
-class TestRelative:
-    def test_minutes(self):
-        assert parse_time("in 5 minutes", now=NOW) == NOW + timedelta(minutes=5)
-
-    def test_singular_minute(self):
-        assert parse_time("in 1 minute", now=NOW) == NOW + timedelta(minutes=1)
-
-    def test_hours(self):
-        assert parse_time("in 2 hours", now=NOW) == NOW + timedelta(hours=2)
-
-    def test_short_unit_m(self):
-        assert parse_time("in 30 m", now=NOW) == NOW + timedelta(minutes=30)
-
-    def test_short_unit_h(self):
-        assert parse_time("in 3 h", now=NOW) == NOW + timedelta(hours=3)
-
-    def test_days(self):
-        assert parse_time("in 2 days", now=NOW) == NOW + timedelta(days=2)
-
-    def test_weeks(self):
-        assert parse_time("in 1 week", now=NOW) == NOW + timedelta(weeks=1)
-
-    def test_seconds(self):
-        assert parse_time("in 45 seconds", now=NOW) == NOW + timedelta(seconds=45)
-
-    def test_case_insensitive(self):
-        assert parse_time("IN 5 Minutes", now=NOW) == NOW + timedelta(minutes=5)
-
-    def test_zero_rejected(self):
-        with pytest.raises(TimeParseError):
-            parse_time("in 0 minutes", now=NOW)
+TODAY = date(2026, 10, 14)
 
 
-class TestDayAnchored:
-    def test_today_future(self):
-        assert parse_time("today 18:00", now=NOW) == NOW.replace(hour=18, minute=0)
-
-    def test_tomorrow(self):
-        expected = (NOW + timedelta(days=1)).replace(hour=9, minute=30)
-        assert parse_time("tomorrow 09:30", now=NOW) == expected
-
-    def test_tomorrow_early_morning(self):
-        expected = (NOW + timedelta(days=1)).replace(hour=0, minute=15)
-        assert parse_time("tomorrow 00:15", now=NOW) == expected
-
-    def test_today_in_past_rejected(self):
-        with pytest.raises(TimeParseError):
-            parse_time("today 08:00", now=NOW)
-
-    def test_invalid_hour(self):
-        with pytest.raises(TimeParseError):
-            parse_time("today 25:00", now=NOW)
-
-    def test_invalid_minute(self):
-        with pytest.raises(TimeParseError):
-            parse_time("today 12:99", now=NOW)
+def parse(text: str) -> QuickAdd:
+    return parse_quick_add(text, TODAY)
 
 
-class TestAbsoluteISO:
-    def test_space_separator(self):
-        assert parse_time("2026-05-15 18:30", now=NOW) == datetime(2026, 5, 15, 18, 30, tzinfo=UTC)
-
-    def test_t_separator(self):
-        assert parse_time("2026-05-15T18:30", now=NOW) == datetime(2026, 5, 15, 18, 30, tzinfo=UTC)
-
-    def test_single_digit_components(self):
-        assert parse_time("2026-6-1 9:05", now=NOW) == datetime(2026, 6, 1, 9, 5, tzinfo=UTC)
-
-    def test_past_rejected(self):
-        with pytest.raises(TimeParseError):
-            parse_time("2025-01-01 12:00", now=NOW)
-
-    def test_invalid_calendar_date(self):
-        with pytest.raises(TimeParseError):
-            parse_time("2026-02-30 12:00", now=NOW)
+class TestSpecificationExample:
+    def test_spotify(self):
+        assert parse("Spotify 15.11 500rub") == QuickAdd(
+            name="Spotify",
+            due=date(2026, 11, 15),
+            kind="subscription",
+            price="500",
+            currency="RUB",
+        )
 
 
-class TestAbsoluteDot:
-    def test_dot_format(self):
-        assert parse_time("15.05.2026 18:30", now=NOW) == datetime(2026, 5, 15, 18, 30, tzinfo=UTC)
+class TestDates:
+    def test_without_a_year_the_next_such_date(self):
+        assert parse("Вода 20.10 100").due == date(2026, 10, 20)
 
-    def test_dot_single_digit(self):
-        assert parse_time("1.6.2026 9:05", now=NOW) == datetime(2026, 6, 1, 9, 5, tzinfo=UTC)
+    def test_without_a_year_a_passed_day_moves_to_next_year(self):
+        assert parse("Вода 01.03 100").due == date(2027, 3, 1)
 
-    def test_dot_past_rejected(self):
-        with pytest.raises(TimeParseError):
-            parse_time("01.01.2025 12:00", now=NOW)
+    def test_today_is_not_moved(self):
+        assert parse("Вода 14.10 100").due == TODAY
+
+    def test_two_digit_year(self):
+        assert parse("Вода 01.03.27 100").due == date(2027, 3, 1)
+
+    def test_four_digit_year(self):
+        assert parse("Вода 01.03.2028 100").due == date(2028, 3, 1)
+
+    def test_iso_date(self):
+        assert parse("Вода 2027-01-31 100").due == date(2027, 1, 31)
+
+    def test_single_digit_day_and_month(self):
+        assert parse("Вода 5.1 100").due == date(2027, 1, 5)
+
+    def test_leap_day_in_a_leap_year(self):
+        assert parse("Вода 29.02.2028 100").due == date(2028, 2, 29)
+
+    def test_leap_day_without_a_year_waits_for_the_next_leap_year(self):
+        assert parse("Вода 29.02 100").due == date(2028, 2, 29)
+
+
+class TestNames:
+    def test_name_with_spaces(self):
+        assert parse("Яндекс Плюс 15.11 299").name == "Яндекс Плюс"
+
+    def test_a_number_in_the_name_that_is_not_a_date(self):
+        result = parse("Сервис 2.0 15.11 299")
+        assert (result.name, result.due) == ("Сервис 2.0", date(2026, 11, 15))
+
+    def test_name_keeps_its_case(self):
+        assert parse("YouTube Premium 15.11 199").name == "YouTube Premium"
+
+
+class TestAmounts:
+    @pytest.mark.parametrize(
+        ("text", "price", "currency"),
+        [
+            ("X 15.11 500rub", "500", "RUB"),
+            ("X 15.11 500руб", "500", "RUB"),
+            ("X 15.11 500р", "500", "RUB"),
+            ("X 15.11 500₽", "500", "RUB"),
+            ("X 15.11 500 руб", "500", "RUB"),
+            ("X 15.11 9.99$", "9.99", "USD"),
+            ("X 15.11 $9.99", "9.99", "USD"),
+            ("X 15.11 9,99€", "9.99", "EUR"),
+            ("X 15.11 10 eur", "10", "EUR"),
+            ("X 15.11 1500 kzt", "1500", "KZT"),
+            ("X 15.11 299", "299", None),
+        ],
+    )
+    def test_amount_and_currency(self, text, price, currency):
+        result = parse(text)
+        assert (result.price, result.currency) == (price, currency)
+
+
+class TestKindsAndPeriods:
+    def test_no_amount_is_a_shelf_life_date(self):
+        result = parse("Витамины 20.11")
+        assert (result.kind, result.price, result.cycle) == ("expiry", None, None)
+
+    def test_maintenance_every_three_months(self):
+        result = parse("Фильтр для воды 10.01 то 3мес")
+        assert (result.name, result.kind, result.cycle, result.frequency) == (
+            "Фильтр для воды",
+            "maintenance",
+            3,
+            3,
+        )
+
+    def test_yearly_subscription(self):
+        result = parse("Netflix 01.12.2026 9.99$ год")
+        assert (result.kind, result.cycle, result.frequency) == ("subscription", 4, 1)
+
+    def test_words_and_amount_in_any_order(self):
+        result = parse("Хостинг 01.12 ежегодно 3000р")
+        assert (result.price, result.currency, result.cycle) == ("3000", "RUB", 4)
+
+    def test_maintenance_with_a_cost(self):
+        result = parse("Котёл 15.11 то 5000р")
+        assert (result.kind, result.price) == ("maintenance", "5000")
 
 
 class TestInvalidInput:
-    def test_empty(self):
-        with pytest.raises(TimeParseError):
-            parse_time("", now=NOW)
+    @pytest.mark.parametrize(
+        ("text", "message"),
+        [
+            ("", "Напишите"),
+            ("   ", "Напишите"),
+            ("Spotify", "Не нашёл дату"),
+            ("Spotify 500rub", "Не нашёл дату"),
+            ("15.11 Spotify", "Сначала название"),
+            ("Spotify 31.02 500", "Такой даты нет"),
+            ("Spotify 15.13 500", "Такой даты нет"),
+            ("Spotify 01.03.2025 500", "уже прошла"),
+            ("Spotify 31.04 500", "Такой даты нет"),
+            ("Spotify 15.11 подписка", "нужна сумма"),
+            ("Spotify 15.11 0rub", "больше нуля"),
+            ("Spotify 15.11 500 рублей?", "Не понял"),
+            ("Spotify 15.11 500xyz1", "Не понял"),
+            ("Spotify 15.11 500 abc def", "Не понял"),
+            ("Spotify 15.11 500рр", "Не знаю валюту"),
+        ],
+    )
+    def test_refused_with_a_reason(self, text, message):
+        with pytest.raises(ParseError, match=message):
+            parse(text)
 
-    def test_whitespace(self):
-        with pytest.raises(TimeParseError):
-            parse_time("   ", now=NOW)
-
-    def test_garbage(self):
-        with pytest.raises(TimeParseError):
-            parse_time("when the cows come home", now=NOW)
-
-    def test_relative_without_unit(self):
-        with pytest.raises(TimeParseError):
-            parse_time("in 5", now=NOW)
-
-    def test_relative_missing_amount(self):
-        with pytest.raises(TimeParseError):
-            parse_time("in minutes", now=NOW)
+    def test_overlong_name(self):
+        with pytest.raises(ParseError, match="слишком длинное"):
+            parse("x" * 101 + " 15.11 100")
 
 
-class TestTimezoneHandling:
-    def test_naive_now_is_attached_to_tz(self):
-        naive_now = datetime(2026, 5, 14, 12, 0)
-        result = parse_time("in 1 hour", now=naive_now, tz=UTC)
-        assert result.tzinfo is not None
-        assert result == datetime(2026, 5, 14, 13, 0, tzinfo=UTC)
-
-    def test_default_tz_is_utc(self):
-        result = parse_time("2030-01-01 12:00", now=NOW)
-        assert result.tzinfo == UTC
+class TestDeterminism:
+    def test_today_is_injected(self):
+        assert parse_quick_add("X 01.01 1", date(2026, 12, 31)).due == date(2027, 1, 1)
+        assert parse_quick_add("X 01.01 1", date(2027, 1, 1)).due == date(2027, 1, 1)

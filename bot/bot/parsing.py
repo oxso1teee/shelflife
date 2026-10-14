@@ -1,148 +1,208 @@
-"""Parse human-friendly time expressions into timezone-aware datetimes.
+"""Parse the one-line ``/add`` command into a record for Wallos.
 
-Supports three grammars:
+Adapted from the time-expression parser of telegram-reminder-bot: the same
+shape (strict regular expressions, a dedicated error type whose message is
+shown to the user, an explicit ``today`` for deterministic tests), applied to
+ShelfLife's grammar instead of reminder times::
 
-* Relative:      "in 5 minutes", "in 2 hours", "in 1 day", "in 30 m"
-* Day-anchored:  "today 18:00", "tomorrow 09:30"
-* Absolute:      "2026-05-14 18:30", "2026-05-14T18:30", "14.05.2026 18:30"
+    /add <name> <date> [<amount>[<currency>]] [<kind or period words>]
 
-Times in the past (relative to `now`) are rejected with `TimeParseError`.
+    /add Spotify 15.11 500rub          subscription, monthly, 500 RUB
+    /add Netflix 01.12.2026 9.99$ год  subscription, yearly, 9.99 USD
+    /add Витамины 20.11                shelf-life date (no amount)
+    /add Фильтр для воды 10.01 то 3мес maintenance every 3 months
+
+The date is DD.MM, DD.MM.YY or DD.MM.YYYY (or YYYY-MM-DD). Without a year it
+is the next such date from today. Anything the parser does not understand is
+reported, never guessed.
 """
 
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta, tzinfo
+from dataclasses import dataclass
+from datetime import date
 
-__all__ = ["TimeParseError", "parse_time"]
+__all__ = ["CURRENCY_ALIASES", "ParseError", "QuickAdd", "parse_quick_add"]
 
-
-class TimeParseError(ValueError):
-    """Raised when an input string cannot be parsed as a time expression."""
-
-
-_RELATIVE_RE = re.compile(
-    r"^\s*in\s+(\d+)\s*(seconds?|minutes?|hours?|days?|weeks?|s|m|h|d|w)\s*$",
-    re.IGNORECASE,
-)
-_DAY_ANCHORED_RE = re.compile(
-    r"^\s*(today|tomorrow)\s+(\d{1,2}):(\d{2})\s*$",
-    re.IGNORECASE,
-)
-_ISO_RE = re.compile(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})\s*$")
-_DOT_RE = re.compile(r"^\s*(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})\s*$")
-
-_UNIT_TO_KEY = {
-    "s": "seconds",
-    "second": "seconds",
-    "seconds": "seconds",
-    "m": "minutes",
-    "minute": "minutes",
-    "minutes": "minutes",
-    "h": "hours",
-    "hour": "hours",
-    "hours": "hours",
-    "d": "days",
-    "day": "days",
-    "days": "days",
-    "w": "weeks",
-    "week": "weeks",
-    "weeks": "weeks",
-}
+MAX_NAME_LENGTH = 100
 
 
-def parse_time(
-    text: str,
-    now: datetime | None = None,
-    tz: tzinfo | None = None,
-) -> datetime:
-    """Parse `text` into a timezone-aware datetime in the future.
+class ParseError(ValueError):
+    """The input cannot be turned into a record; the message is for the user."""
 
-    Args:
-        text: The expression to parse.
-        now:  Reference "current" time. Defaults to `datetime.now(tz)`. Pass
-              an explicit value in tests for determinism.
-        tz:   Timezone used when interpreting absolute/day-anchored grammars
-              and as the default for `now`. Defaults to UTC.
 
-    Raises:
-        TimeParseError: when the input is empty, malformed, or resolves to a
-            point in the past.
-    """
-    if not text or not text.strip():
-        raise TimeParseError("empty input")
+@dataclass(frozen=True, slots=True)
+class QuickAdd:
+    name: str
+    due: date
+    kind: str  # "subscription" | "expiry" | "maintenance"
+    price: str | None = None  # decimal string with a dot, e.g. "9.99"
+    currency: str | None = None  # ISO code, e.g. "RUB"; None = the account's main currency
+    cycle: int | None = None  # 1 days, 2 weeks, 3 months, 4 years, 5 one-time
+    frequency: int | None = None
 
-    tz = tz or UTC
-    if now is None:
-        now = datetime.now(tz)
-    elif now.tzinfo is None:
-        now = now.replace(tzinfo=tz)
 
-    if m := _RELATIVE_RE.match(text):
-        amount = int(m.group(1))
-        if amount == 0:
-            raise TimeParseError("relative offset must be positive")
-        key = _UNIT_TO_KEY[m.group(2).lower()]
-        return now + timedelta(**{key: amount})
+_DOT_RE = re.compile(r"^(\d{1,2})\.(\d{1,2})(?:\.(\d{2}|\d{4}))?$")
+_ISO_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_AMOUNT_RE = re.compile(r"^([$€₽]?)(\d+(?:[.,]\d{1,2})?)([^\d.,]*)$")
+_EVERY_MONTHS_RE = re.compile(r"^(\d{1,2})(?:мес|m)$")
 
-    if m := _DAY_ANCHORED_RE.match(text):
-        word = m.group(1).lower()
-        hour = int(m.group(2))
-        minute = int(m.group(3))
-        _validate_clock(hour, minute)
-        base = now if word == "today" else now + timedelta(days=1)
-        result = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if result <= now:
-            raise TimeParseError(f"{word!s} {hour:02d}:{minute:02d} is in the past")
-        return result
+CURRENCY_ALIASES = {
+    "₽": "RUB", "rub": "RUB", "rur": "RUB", "руб": "RUB", "р": "RUB",
+    "$": "USD", "usd": "USD", "долл": "USD",
+    "€": "EUR", "eur": "EUR", "евро": "EUR",
+    "₸": "KZT", "kzt": "KZT", "тенге": "KZT",
+    "byn": "BYN", "uah": "UAH", "gbp": "GBP", "cny": "CNY", "try": "TRY",
+}  # fmt: skip
 
-    if m := _ISO_RE.match(text):
-        return _build_absolute(
-            year=int(m.group(1)),
-            month=int(m.group(2)),
-            day=int(m.group(3)),
-            hour=int(m.group(4)),
-            minute=int(m.group(5)),
-            tz=tz,
-            now=now,
+_KIND_WORDS = {
+    "подписка": "subscription",
+    "срок": "expiry", "годен": "expiry", "годность": "expiry",
+    "то": "maintenance", "обслуживание": "maintenance",
+}  # fmt: skip
+
+# word -> (cycle, frequency)
+_PERIOD_WORDS = {
+    "ежедневно": (1, 1), "день": (1, 1),
+    "еженедельно": (2, 1), "неделя": (2, 1), "нед": (2, 1),
+    "ежемесячно": (3, 1), "месяц": (3, 1), "мес": (3, 1),
+    "ежегодно": (4, 1), "год": (4, 1),
+    "разово": (5, 1),
+}  # fmt: skip
+
+
+def parse_quick_add(text: str, today: date) -> QuickAdd:
+    """Parse the arguments of ``/add`` (everything after the command)."""
+    tokens = (text or "").split()
+    if not tokens:
+        raise ParseError("Напишите, что добавить.")
+
+    date_index, due = _find_date(tokens, today)
+    name = " ".join(tokens[:date_index]).strip()
+    if not name:
+        raise ParseError("Сначала название, потом дата: /add Spotify 15.11 500rub")
+    if len(name) > MAX_NAME_LENGTH:
+        raise ParseError(f"Название слишком длинное (до {MAX_NAME_LENGTH} символов).")
+
+    price: str | None = None
+    currency: str | None = None
+    kind: str | None = None
+    cycle: int | None = None
+    frequency: int | None = None
+
+    rest = [token.lower() for token in tokens[date_index + 1 :]]
+    i = 0
+    while i < len(rest):
+        token = rest[i]
+        # Words and periods first: "3мес" would otherwise read as an amount of 3.
+        if token in _KIND_WORDS and kind is None:
+            kind = _KIND_WORDS[token]
+        elif token in _PERIOD_WORDS and cycle is None:
+            cycle, frequency = _PERIOD_WORDS[token]
+        elif (every := _EVERY_MONTHS_RE.match(token)) and cycle is None:
+            frequency = int(every.group(1))
+            if frequency < 1:
+                raise ParseError("Период должен быть не меньше 1 месяца.")
+            cycle = 3
+        elif price is None and (amount := _AMOUNT_RE.match(token)):
+            prefix, number, suffix = amount.groups()
+            price = _price(number)
+            unit = prefix or suffix
+            if not unit and i + 1 < len(rest) and _currency(rest[i + 1]) is not None:
+                i += 1
+                unit = rest[i]
+            if unit:
+                currency = _currency(unit)
+                if currency is None:
+                    raise ParseError(f"Не знаю валюту «{unit}». Например: 500rub, 9.99$, 10€.")
+        else:
+            raise ParseError(f"Не понял «{tokens[date_index + 1 + i]}».")
+        i += 1
+
+    if kind is None:
+        # A price means something paid for; a bare date is a shelf-life date.
+        kind = "subscription" if price is not None else "expiry"
+    if kind == "subscription" and price is None:
+        raise ParseError("Для подписки нужна сумма: /add Spotify 15.11 500rub")
+
+    return QuickAdd(
+        name=name,
+        due=due,
+        kind=kind,
+        price=price,
+        currency=currency,
+        cycle=cycle,
+        frequency=frequency,
+    )
+
+
+def _find_date(tokens: list[str], today: date) -> tuple[int, date]:
+    """The first token after the name that is a date; a date-like token that
+    is not a real date ("31.02") is an error unless a later token is valid."""
+    impossible: str | None = None
+    for index in range(1, len(tokens)):
+        token = tokens[index]
+        if not (_DOT_RE.match(token) or _ISO_RE.match(token)):
+            continue
+        try:
+            return index, _build_date(token, today)
+        except ParseError as exc:
+            impossible = impossible or str(exc)
+    if impossible:
+        raise ParseError(impossible)
+    if _DOT_RE.match(tokens[0]) or _ISO_RE.match(tokens[0]):
+        raise ParseError("Сначала название, потом дата: /add Spotify 15.11 500rub")
+    raise ParseError("Не нашёл дату. Формат: ДД.ММ или ДД.ММ.ГГГГ, например 15.11.")
+
+
+def _build_date(token: str, today: date) -> date:
+    if match := _ISO_RE.match(token):
+        year, month, day = (int(part) for part in match.groups())
+        explicit_year = True
+    else:
+        match = _DOT_RE.match(token)
+        assert match is not None
+        day, month = int(match.group(1)), int(match.group(2))
+        year_text = match.group(3)
+        explicit_year = year_text is not None
+        year = (
+            int(year_text) + (2000 if year_text and len(year_text) == 2 else 0)
+            if year_text
+            else today.year
         )
 
-    if m := _DOT_RE.match(text):
-        return _build_absolute(
-            year=int(m.group(3)),
-            month=int(m.group(2)),
-            day=int(m.group(1)),
-            hour=int(m.group(4)),
-            minute=int(m.group(5)),
-            tz=tz,
-            now=now,
-        )
+    if not explicit_year:
+        # The next such date from today; 29.02 waits for the next leap year.
+        for candidate_year in range(today.year, today.year + 5):
+            try:
+                candidate = date(candidate_year, month, day)
+            except ValueError:
+                continue
+            if candidate >= today:
+                return candidate
+        raise ParseError(f"Такой даты нет: {token}.")
 
-    raise TimeParseError(f"could not parse time expression: {text!r}")
-
-
-def _build_absolute(
-    *,
-    year: int,
-    month: int,
-    day: int,
-    hour: int,
-    minute: int,
-    tz: tzinfo,
-    now: datetime,
-) -> datetime:
-    _validate_clock(hour, minute)
     try:
-        dt = datetime(year, month, day, hour, minute, tzinfo=tz)
-    except ValueError as exc:
-        raise TimeParseError(f"invalid date: {exc}") from exc
-    if dt <= now:
-        raise TimeParseError(f"specified time {dt.isoformat()} is in the past")
-    return dt
+        result = date(year, month, day)
+    except ValueError:
+        raise ParseError(f"Такой даты нет: {token}.") from None
+    if result < today:
+        raise ParseError(f"Дата {result.strftime('%d.%m.%Y')} уже прошла.")
+    return result
 
 
-def _validate_clock(hour: int, minute: int) -> None:
-    if not 0 <= hour <= 23:
-        raise TimeParseError(f"hour must be 0..23, got {hour}")
-    if not 0 <= minute <= 59:
-        raise TimeParseError(f"minute must be 0..59, got {minute}")
+def _price(number: str) -> str:
+    value = number.replace(",", ".")
+    if float(value) <= 0:
+        raise ParseError("Сумма должна быть больше нуля.")
+    return value
+
+
+def _currency(unit: str) -> str | None:
+    unit = unit.strip().lower().rstrip(".")
+    if unit in CURRENCY_ALIASES:
+        return CURRENCY_ALIASES[unit]
+    if re.fullmatch(r"[a-z]{3}", unit):
+        return unit.upper()
+    return None

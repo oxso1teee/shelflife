@@ -1,59 +1,101 @@
-"""Generic handlers: /start, /help, menu navigation."""
+"""Generic handlers: /start (with or without a link token) and /help."""
 
 from __future__ import annotations
 
+import html
 import logging
+import re
 
-from aiogram import F, Router
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram import Router
+from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.types import Message
 
-from bot.keyboards import BackCB, MenuCB, main_menu
+from bot.wallos_client import WallosClient, WallosError
 
 log = logging.getLogger(__name__)
 router = Router()
 
-WELCOME = (
-    "Hi! I'm your personal reminder bot.\n" "Use the menu below to add, view, or delete reminders."
+# The profile page issues 32 hex characters; anything else is not worth a request.
+_TOKEN_RE = re.compile(r"^[0-9a-f]{32}$")
+
+NOT_LINKED = (
+    "Привет! Я бот ShelfLife: напоминаю о платежах по подпискам, сроках годности "
+    "и обслуживании техники.\n\n"
+    "Чтобы получать уведомления, привяжите аккаунт: на сайте откройте "
+    "<b>Профиль → Telegram-бот</b>, нажмите «Привязать Telegram» и перейдите по ссылке."
 )
 
 HELP_TEXT = (
-    "<b>How to use</b>\n\n"
-    "<b>Add reminder</b> — opens a 3-step dialog (text, time, recurrence).\n"
-    "<b>My reminders</b> — shows your active reminders; tap one to delete.\n\n"
-    "<b>Time formats</b>\n"
-    "- Relative: <code>in 5 minutes</code>, <code>in 2 hours</code>, <code>in 1 day</code>\n"
-    "- Day-anchored: <code>today 18:00</code>, <code>tomorrow 09:30</code>\n"
-    "- Absolute: <code>2026-05-14 18:30</code>, <code>14.05.2026 18:30</code>\n\n"
-    "<b>Recurrence</b>\n"
-    "- One-off (fires once)\n"
-    "- Daily / Weekly (same time, same day of week for weekly)\n\n"
-    "Commands: /start, /help"
+    "<b>Что умеет бот</b>\n\n"
+    "• присылает напоминания о предстоящих платежах, сроках годности и обслуживании;\n"
+    "• под каждым напоминанием — кнопки «Продлено», «Отменено», «Напомнить позже»;\n"
+    "• /add — быстро добавить запись: <code>/add Spotify 15.11 500rub</code>.\n\n"
+    "<b>Привязка</b>: на сайте <b>Профиль → Telegram-бот</b> → «Привязать Telegram».\n\n"
+    "Команды: /add, /cancel, /start, /help"
 )
 
+LINK_RESULTS = {
+    "invalid_token": (
+        "Ссылка недействительна: её срок истёк или она уже использована. "
+        "Получите новую в профиле на сайте."
+    ),
+    "telegram_taken": (
+        "Этот Telegram уже привязан к другому аккаунту ShelfLife. "
+        "Отвяжите его там и попробуйте ещё раз."
+    ),
+}
 
-@router.message(Command("start"))
-async def cmd_start(message: Message, state: FSMContext) -> None:
-    await state.clear()
-    await message.answer(WELCOME, reply_markup=main_menu())
+UNAVAILABLE = "Сервис временно недоступен. Попробуйте позже."
+
+
+@router.message(CommandStart(deep_link=True))
+async def cmd_start_link(message: Message, command: CommandObject, wallos: WallosClient) -> None:
+    if message.from_user is None:
+        return
+
+    token = (command.args or "").strip()
+    if not _TOKEN_RE.match(token):
+        await message.answer(LINK_RESULTS["invalid_token"])
+        return
+
+    try:
+        result = await wallos.link(token, message.from_user.id, message.from_user.username)
+    except WallosError:
+        log.exception("Linking failed for telegram_id=%d", message.from_user.id)
+        await message.answer(UNAVAILABLE)
+        return
+
+    if result.status == "linked":
+        name = html.escape(result.username or "")
+        await message.answer(
+            f"Готово! Аккаунт <b>{name}</b> привязан. "
+            "Сюда будут приходить напоминания из ShelfLife.\n\n/help — что умеет бот."
+        )
+    else:
+        await message.answer(LINK_RESULTS[result.status])
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, wallos: WallosClient) -> None:
+    if message.from_user is None:
+        return
+
+    try:
+        account = await wallos.account(message.from_user.id)
+    except WallosError:
+        log.exception("Account lookup failed for telegram_id=%d", message.from_user.id)
+        await message.answer(UNAVAILABLE)
+        return
+
+    if account.linked:
+        name = html.escape(account.username or "")
+        await message.answer(
+            f"Аккаунт <b>{name}</b> уже привязан. Напоминания будут приходить сюда.\n\n/help — что умеет бот."
+        )
+    else:
+        await message.answer(NOT_LINKED)
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT, reply_markup=main_menu(), parse_mode="HTML")
-
-
-@router.callback_query(MenuCB.filter(F.action == "help"))
-async def menu_help(query: CallbackQuery) -> None:
-    if isinstance(query.message, Message):
-        await query.message.edit_text(HELP_TEXT, reply_markup=main_menu(), parse_mode="HTML")
-    await query.answer()
-
-
-@router.callback_query(BackCB.filter(F.target == "menu"))
-async def back_to_menu(query: CallbackQuery, state: FSMContext) -> None:
-    await state.clear()
-    if isinstance(query.message, Message):
-        await query.message.edit_text(WELCOME, reply_markup=main_menu())
-    await query.answer()
+    await message.answer(HELP_TEXT)
