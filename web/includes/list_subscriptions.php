@@ -2,6 +2,7 @@
 
 require_once 'i18n/getlang.php';
 require_once __DIR__ . '/currency_rates.php';
+require_once __DIR__ . '/shelflife/status.php';
 
 function getBillingCycle($cycle, $frequency, $i18n)
 {
@@ -162,15 +163,17 @@ function printSubscriptions($subscriptions, $sort, $categories, $members, $i18n,
         }
     }
 
-    // One-time purchases always go to the bottom regardless of sort order
-    usort($subscriptions, fn($a, $b) => ($a['one_time'] ? 1 : 0) - ($b['one_time'] ? 1 : 0));
+    // One-time purchases always go to the bottom regardless of sort order.
+    // ShelfLife: a shelf-life date is one-time too, but it is listed by its date like the rest.
+    $isOneTimePurchase = fn($s) => $s['one_time'] && ($s['kind'] ?? 'subscription') === 'subscription';
+    usort($subscriptions, fn($a, $b) => ($isOneTimePurchase($a) ? 1 : 0) - ($isOneTimePurchase($b) ? 1 : 0));
 
     $currentCategory = 0;
     $currentPayerUserId = 0;
     $currentPaymentMethodId = 0;
     $oneTimeSectionShown = false;
     foreach ($subscriptions as $subscription) {
-        if ($subscription['one_time'] && !$oneTimeSectionShown) {
+        if ($isOneTimePurchase($subscription) && !$oneTimeSectionShown) {
             ?>
             <div class="subscription-list-title">
                 <?= translate('lifetime_purchases', $i18n) ?>
@@ -248,6 +251,11 @@ function printSubscriptions($subscriptions, $sort, $categories, $members, $i18n,
             if ($subscription['auto_renew'] != 1) {
                 $subscriptionExtraClasses .= " manual";
             }
+            // ShelfLife: green / yellow (less than 7 days) / red (overdue) for active records.
+            if (!$subscription['inactive'] && !empty($subscription['status'])) {
+                $subscriptionExtraClasses .= " shelflife-status-" . $subscription['status'];
+            }
+            $recordKind = $subscription['kind'] ?? 'subscription';
 
             $hasLogo = false;
             if ($subscription['logo'] != "") {
@@ -281,9 +289,19 @@ function printSubscriptions($subscriptions, $sort, $categories, $members, $i18n,
                             }
                         }
                         ?>
-                        <?= $subscription['billing_cycle'] ?>
+                        <?php
+                        if ($recordKind === 'subscription') {
+                            echo $subscription['billing_cycle'];
+                        } else {
+                            echo translate('record_kind_' . $recordKind, $i18n) . ($subscription['one_time'] ? '' : ' · ' . $subscription['billing_cycle']);
+                        }
+                        ?>
                     </span>
-                    <span class="next"><?= formatDate($subscription['next_payment'], $lang) ?></span>
+                    <span class="next"><?= formatDate($subscription['next_payment'], $lang) ?>
+                        <?php if (!$subscription['inactive'] && isset($subscription['days_left'])) { ?>
+                            <small class="shelflife-days-left"><?= htmlspecialchars(shelflife_days_left_text($subscription['days_left'], $lang)) ?></small>
+                        <?php } ?>
+                    </span>
                     <span class="price">
                         <span class="value">
                             <?= formatPrice($subscription['price'], $subscription['currency_code'], $currencies) ?>

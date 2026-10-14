@@ -174,6 +174,9 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     }
   }
 
+  require_once __DIR__ . '/../../includes/shelflife/status.php';
+  $shelflifeToday = shelflife_today();
+
   foreach ($subscriptions as $subscription) {
     if ($subscription['inactive'] == 1 && isset($settings['hideDisabledSubscriptions']) && $settings['hideDisabledSubscriptions'] === 'true') {
       continue;
@@ -188,6 +191,10 @@ if (isset($_SESSION['loggedin']) && $_SESSION['loggedin'] === true) {
     $frequency = $subscription['frequency'];
     $print[$id]['billing_cycle'] = getBillingCycle($cycle, $frequency, $i18n);
     $print[$id]['one_time'] = ($cycle == 5);
+    // ShelfLife: record kind and traffic-light status (includes/shelflife/status.php).
+    $print[$id]['kind'] = $subscription['kind'] ?? 'subscription';
+    $print[$id]['days_left'] = shelflife_is_valid_date($subscription['next_payment']) ? shelflife_days_left($subscription['next_payment'], $shelflifeToday) : null;
+    $print[$id]['status'] = $print[$id]['days_left'] === null ? null : shelflife_record_status($subscription['next_payment'], $shelflifeToday);
     $paymentMethodId = $subscription['payment_method_id'];
     $print[$id]['currency_code'] = $currencies[$subscription['currency_id']]['code'];
     $currencyId = $subscription['currency_id'];

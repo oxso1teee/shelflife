@@ -252,28 +252,28 @@ if (isset($_POST['one-time-code'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#12151C" ?>" id="theme-color" />
-    <meta name="apple-mobile-web-app-title" content="Wallos">
-    <title>Wallos - Subscription Tracker</title>
+    <meta name="apple-mobile-web-app-title" content="ShelfLife">
+    <title>ShelfLife &mdash; <?= translate('brand_tagline', $i18n) ?></title>
     <link rel="icon" type="image/png" href="images/icon/favicon.ico" sizes="16x16">
     <link rel="apple-touch-icon" href="images/icon/apple-touch-icon.png">
     <link rel="apple-touch-icon" sizes="152x152" href="images/icon/apple-touch-icon-152.png">
     <link rel="apple-touch-icon" sizes="180x180" href="images/icon/apple-touch-icon-180.png">
     <link rel="manifest" href="manifest.php">
-    <link rel="stylesheet" href="styles/theme.css?<?= $version ?>">
-    <link rel="stylesheet" href="styles/login.css?<?= $version ?>">
-    <link rel="stylesheet" href="styles/themes/red.css?<?= $version ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/green.css?<?= $version ?>" id="green-theme" <?= $colorTheme != "green" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/yellow.css?<?= $version ?>" id="yellow-theme" <?= $colorTheme != "yellow" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/purple.css?<?= $version ?>" id="purple-theme" <?= $colorTheme != "purple" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/theme.css?<?= $assetVersion ?>">
+    <link rel="stylesheet" href="styles/login.css?<?= $assetVersion ?>">
+    <link rel="stylesheet" href="styles/themes/red.css?<?= $assetVersion ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/green.css?<?= $assetVersion ?>" id="green-theme" <?= $colorTheme != "green" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/yellow.css?<?= $assetVersion ?>" id="yellow-theme" <?= $colorTheme != "yellow" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/purple.css?<?= $assetVersion ?>" id="purple-theme" <?= $colorTheme != "purple" ? "disabled" : "" ?>>
     <link rel="stylesheet" href="styles/font-awesome.min.css">
     <link rel="stylesheet" href="styles/barlow.css">
-    <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $version ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $assetVersion ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
     <script type="text/javascript">
         window.update_theme_settings = "<?= $updateThemeSettings ?>";
         window.color_theme = <?= json_encode($colorTheme, JSON_HEX_TAG | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
     </script>
-    <script type="text/javascript" src="scripts/login.js?<?= $version ?>"></script>
-    <script type="text/javascript" src="scripts/auth-theme.js?<?= $version ?>"></script>
+    <script type="text/javascript" src="scripts/login.js?<?= $assetVersion ?>"></script>
+    <script type="text/javascript" src="scripts/auth-theme.js?<?= $assetVersion ?>"></script>
 </head>
 
 <body class="<?= $languages[$lang]['dir'] ?>">
@@ -290,11 +290,11 @@ if (isset($_POST['one-time-code'])) {
                 <h1><?= translate('auth_tagline', $i18n) ?></h1>
                 <p><?= translate('auth_tagline_sub', $i18n) ?></p>
             </div>
-            <div class="auth-brand-footer">Wallos &mdash; Subscription Tracker</div>
+            <div class="auth-brand-footer">ShelfLife &mdash; <?= translate('brand_tagline', $i18n) ?></div>
         </aside>
         <section class="container">
             <header>
-                <div class="logo-image" title="Wallos - Subscription Tracker">
+                <div class="logo-image" title="ShelfLife">
                     <?php include "images/siteicons/svg/logo.php"; ?>
                 </div>
                 <p>

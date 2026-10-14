@@ -64,10 +64,10 @@ if ($rows) {
             foreach ($rows as $user) {
                 $mail->addAddress($user['email']);
                 $mail->isHTML(true);
-                $mail->Subject = 'Wallos - Email Verification';
-                $mail->Body = '<img src="' . $server_url . '/images/siteicons/wallos.png" alt="Logo" />
+                $mail->Subject = 'ShelfLife - Email Verification';
+                $mail->Body = '<img src="' . $server_url . '/images/siteicons/shelflife.png" alt="ShelfLife" width="206" height="40" />
                     <br>
-                    Registration on Wallos was successful.
+                    Registration on ShelfLife was successful.
                     <br>
                     Please click the following link to verify your email: <a href="' . $server_url . '/verifyemail.php?email=' . $user['email'] . '&token=' . $user['token'] . '">Verify Email</a>';
 

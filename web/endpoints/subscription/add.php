@@ -232,47 +232,9 @@ function resizeAndUploadLogo($uploadedFile, $uploadDir, $name, $settings)
     return "";
 }
 
-$isEdit = isset($_POST['id']) && $_POST['id'] != "";
-$name = validate($_POST["name"]);
-$price = $_POST['price'];
-$currencyId = $_POST["currency_id"];
-$frequency = $_POST["frequency"];
-$cycle = $_POST["cycle"];
-$nextPayment = $_POST["next_payment"];
-$autoRenew = isset($_POST['auto_renew']) ? true : false;
-$startDate = $_POST["start_date"];
-$paymentMethodId = $_POST["payment_method_id"];
-$payerUserId = $_POST["payer_user_id"];
-$categoryId = $_POST['category_id'];
-$notes = validate_markdown($_POST["notes"]);
-$url = validate($_POST['url']);
-$logoUrl = validate($_POST['logo-url']);
-$logo = "";
-$logoError = "";
-$notify = isset($_POST['notifications']) ? true : false;
-$notifyDaysBefore = $_POST['notify_days_before'];
-$inactive = isset($_POST['inactive']) ? true : false;
-$cancellationDate = $_POST['cancellation_date'] ?? null;
-$replacementSubscriptionId = $_POST['replacement_subscription_id'];
+require_once '../../includes/shelflife/subscription_service.php';
 
-if ($replacementSubscriptionId == 0 || $inactive == 0) {
-    $replacementSubscriptionId = null;
-}
-
-if ($replacementSubscriptionId !== null) {
-    $ownerCheck = $db->prepare("SELECT id FROM subscriptions WHERE id = :id AND user_id = :userId");
-    $ownerCheck->bindParam(':id', $replacementSubscriptionId, SQLITE3_INTEGER);
-    $ownerCheck->bindParam(':userId', $userId, SQLITE3_INTEGER);
-    $ownerResult = $ownerCheck->execute();
-    if (!$ownerResult || !$ownerResult->fetchArray()) {
-        $replacementSubscriptionId = null;
-    }
-}
-
-// Reject any foreign key that doesn't belong to the authenticated user, so a
-// subscription can't be attached to another tenant's currency/category/
-// household member/payment method (IDs are global auto-increment integers
-// and easily enumerable).
+// Answers the form with an error the page shows to the user.
 function rejectForeignId($message)
 {
     header('Content-Type: application/json');
@@ -280,43 +242,54 @@ function rejectForeignId($message)
     exit();
 }
 
-$currStmt = $db->prepare("SELECT id FROM currencies WHERE id = :id AND user_id = :userId");
-$currStmt->bindParam(':id', $currencyId, SQLITE3_INTEGER);
-$currStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-$currResult = $currStmt->execute();
-if (!$currResult || !$currResult->fetchArray()) {
-    rejectForeignId('The specified currency does not exist or does not belong to you.');
-}
-
-if ($categoryId !== null && $categoryId !== '') {
-    $catStmt = $db->prepare("SELECT id FROM categories WHERE id = :id AND user_id = :userId");
-    $catStmt->bindParam(':id', $categoryId, SQLITE3_INTEGER);
-    $catStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-    $catResult = $catStmt->execute();
-    if (!$catResult || !$catResult->fetchArray()) {
-        rejectForeignId('The specified category does not exist or does not belong to you.');
+$isEdit = isset($_POST['id']) && $_POST['id'] != "";
+$id = $isEdit ? (int) $_POST['id'] : null;
+$existing = null;
+if ($isEdit) {
+    $existing = shelflife_subscription_find($db, $userId, $id);
+    if ($existing === null) {
+        rejectForeignId('The subscription does not exist or does not belong to you.');
     }
 }
 
-if ($payerUserId !== null && $payerUserId !== '') {
-    $payerStmt = $db->prepare("SELECT id FROM household WHERE id = :id AND user_id = :userId");
-    $payerStmt->bindParam(':id', $payerUserId, SQLITE3_INTEGER);
-    $payerStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-    $payerResult = $payerStmt->execute();
-    if (!$payerResult || !$payerResult->fetchArray()) {
-        rejectForeignId('The specified household member does not exist or does not belong to you.');
-    }
+// ShelfLife: validation, the ownership checks on every referenced id and the
+// write itself are shared with the API, the bot and the cron jobs
+// (includes/shelflife/subscription_service.php). The form posts every field,
+// so unticked checkboxes are passed as false rather than left out.
+$input = [
+    'name' => $_POST['name'] ?? '',
+    'price' => $_POST['price'] ?? null,
+    'currency_id' => $_POST['currency_id'] ?? null,
+    'frequency' => $_POST['frequency'] ?? null,
+    'cycle' => $_POST['cycle'] ?? null,
+    'next_payment' => $_POST['next_payment'] ?? null,
+    'auto_renew' => isset($_POST['auto_renew']),
+    'start_date' => $_POST['start_date'] ?? null,
+    'payment_method_id' => $_POST['payment_method_id'] ?? null,
+    'payer_user_id' => $_POST['payer_user_id'] ?? null,
+    'category_id' => $_POST['category_id'] ?? null,
+    'notes' => $_POST['notes'] ?? '',
+    'url' => $_POST['url'] ?? '',
+    'notify' => isset($_POST['notifications']),
+    'notify_days_before' => $_POST['notify_days_before'] ?? null,
+    'inactive' => isset($_POST['inactive']),
+    'cancellation_date' => $_POST['cancellation_date'] ?? null,
+    'replacement_subscription_id' => $_POST['replacement_subscription_id'] ?? null,
+];
+if (isset($_POST['kind'])) {
+    $input['kind'] = $_POST['kind'];
 }
 
-if ($paymentMethodId !== null && $paymentMethodId !== '') {
-    $pmStmt = $db->prepare("SELECT id FROM payment_methods WHERE id = :id AND (user_id = :userId OR user_id = 0 OR user_id IS NULL)");
-    $pmStmt->bindParam(':id', $paymentMethodId, SQLITE3_INTEGER);
-    $pmStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-    $pmResult = $pmStmt->execute();
-    if (!$pmResult || !$pmResult->fetchArray()) {
-        rejectForeignId('The specified payment method does not exist or does not belong to you.');
-    }
+try {
+    $subscriptionData = shelflife_subscription_prepare($db, $userId, $input, $existing);
+} catch (ShelfLifeValidationError $e) {
+    rejectForeignId($e->getMessage());
 }
+
+$name = $subscriptionData['name'];
+$logoUrl = validate($_POST['logo-url'] ?? '');
+$logo = "";
+$logoError = "";
 
 if ($logoUrl !== "") {
     $result = getLogoFromUrl($logoUrl, '../../images/uploads/logos/', $name, $settings, $i18n);
@@ -371,93 +344,26 @@ if ($logo !== "" && $removeBackgroundEnabled) {
     }
 }
 
-if (!$isEdit) {
-    $sql = "INSERT INTO subscriptions (
-                        name, logo, price, currency_id, next_payment, cycle, frequency, notes,
-                        payment_method_id, payer_user_id, category_id, notify, inactive, url,
-                        notify_days_before, user_id, cancellation_date, replacement_subscription_id,
-                        auto_renew, start_date, logo_text_color, logo_variant
-                    ) VALUES (
-                        :name, :logo, :price, :currencyId, :nextPayment, :cycle, :frequency, :notes,
-                        :paymentMethodId, :payerUserId, :categoryId, :notify, :inactive, :url,
-                        :notifyDaysBefore, :userId, :cancellationDate, :replacement_subscription_id,
-                        :autoRenew, :startDate, :logoTextColor, :logoVariant
-                    )";
-} else {
-    $id = $_POST['id'];
+$newLogo = $logo != "" ? ['logo' => $logo, 'logo_text_color' => $logoTextColor, 'logo_variant' => $logoVariant] : null;
 
-    // When the logo is being replaced, remember the old files so they can be
-    // removed after the update instead of lingering as orphans.
-    $oldLogo = null;
-    $oldLogoVariant = null;
-    if ($logo != "") {
-        $oldLogoStmt = $db->prepare("SELECT logo, logo_variant FROM subscriptions WHERE id = :id AND user_id = :userId");
-        $oldLogoStmt->bindParam(':id', $id, SQLITE3_INTEGER);
-        $oldLogoStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-        $oldLogoResult = $oldLogoStmt->execute();
-        if ($oldLogoResult && ($oldLogoRow = $oldLogoResult->fetchArray(SQLITE3_ASSOC))) {
-            $oldLogo = $oldLogoRow['logo'];
-            $oldLogoVariant = $oldLogoRow['logo_variant'];
-        }
+// When the logo is being replaced, remember the old files so they can be
+// removed after the update instead of lingering as orphans.
+$oldLogo = $isEdit && $newLogo !== null ? $existing['logo'] : null;
+$oldLogoVariant = $isEdit && $newLogo !== null ? $existing['logo_variant'] : null;
+
+try {
+    if (!$isEdit) {
+        shelflife_subscription_insert($db, $userId, $subscriptionData, $newLogo ?? []);
+    } else {
+        shelflife_subscription_update($db, $userId, $id, $subscriptionData, $newLogo);
     }
-
-    $sql = "UPDATE subscriptions SET
-                        name = :name,
-                        price = :price,
-                        currency_id = :currencyId,
-                        next_payment = :nextPayment,
-                        auto_renew = :autoRenew,
-                        start_date = :startDate,
-                        cycle = :cycle, 
-                        frequency = :frequency, 
-                        notes = :notes, 
-                        payment_method_id = :paymentMethodId,
-                        payer_user_id = :payerUserId, 
-                        category_id = :categoryId, 
-                        notify = :notify, 
-                        inactive = :inactive, 
-                        url = :url, 
-                        notify_days_before = :notifyDaysBefore, 
-                        cancellation_date = :cancellationDate, 
-                        replacement_subscription_id = :replacement_subscription_id";
-
-    if ($logo != "") {
-        $sql .= ", logo = :logo, logo_text_color = :logoTextColor, logo_variant = :logoVariant";
-    }
-
-    $sql .= " WHERE id = :id AND user_id = :userId";
+    $saved = true;
+} catch (RuntimeException $e) {
+    error_log('ShelfLife: saving a subscription failed: ' . $e->getMessage());
+    $saved = false;
 }
 
-$stmt = $db->prepare($sql);
-$stmt->bindParam(':name', $name, SQLITE3_TEXT);
-if ($logo != "") {
-    $stmt->bindParam(':logo', $logo, SQLITE3_TEXT);
-    $stmt->bindParam(':logoTextColor', $logoTextColor, SQLITE3_TEXT);
-    $stmt->bindParam(':logoVariant', $logoVariant, SQLITE3_TEXT);
-}
-$stmt->bindParam(':price', $price, SQLITE3_FLOAT);
-$stmt->bindParam(':currencyId', $currencyId, SQLITE3_INTEGER);
-$stmt->bindParam(':nextPayment', $nextPayment, SQLITE3_TEXT);
-$stmt->bindParam(':autoRenew', $autoRenew, SQLITE3_INTEGER);
-$stmt->bindParam(':startDate', $startDate, SQLITE3_TEXT);
-$stmt->bindParam(':cycle', $cycle, SQLITE3_INTEGER);
-$stmt->bindParam(':frequency', $frequency, SQLITE3_INTEGER);
-$stmt->bindParam(':notes', $notes, SQLITE3_TEXT);
-$stmt->bindParam(':paymentMethodId', $paymentMethodId, SQLITE3_INTEGER);
-$stmt->bindParam(':payerUserId', $payerUserId, SQLITE3_INTEGER);
-$stmt->bindParam(':categoryId', $categoryId, SQLITE3_INTEGER);
-$stmt->bindParam(':notify', $notify, SQLITE3_INTEGER);
-$stmt->bindParam(':inactive', $inactive, SQLITE3_INTEGER);
-$stmt->bindParam(':url', $url, SQLITE3_TEXT);
-$stmt->bindParam(':notifyDaysBefore', $notifyDaysBefore, SQLITE3_INTEGER);
-$stmt->bindParam(':cancellationDate', $cancellationDate, SQLITE3_TEXT);
-if ($isEdit) {
-    $stmt->bindParam(':id', $id, SQLITE3_INTEGER);
-}
-$stmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-$stmt->bindParam(':replacement_subscription_id', $replacementSubscriptionId, SQLITE3_INTEGER);
-
-if ($stmt->execute()) {
+if ($saved) {
     $success['status'] = "Success";
     $text = $isEdit ? "updated" : "added";
     $success['message'] = translate('subscription_' . $text . '_successfuly', $i18n);
@@ -479,7 +385,7 @@ if ($stmt->execute()) {
     echo json_encode($success);
     exit();
 } else {
-    echo translate('error', $i18n) . ": " . $db->lastErrorMsg();
+    rejectForeignId(translate('error', $i18n));
 }
 $db->close();
 ?>

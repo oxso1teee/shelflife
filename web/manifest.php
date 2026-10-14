@@ -21,8 +21,8 @@ if ($theme === 'automatic') {
 $themeColor = $theme === 'light' ? '#FFFFFF' : '#12151C';
 
 $manifest = [
-    'short_name' => 'Wallos',
-    'name' => 'Wallos - Subscription Tracker',
+    'short_name' => 'ShelfLife',
+    'name' => 'ShelfLife - Subscriptions, expiry dates and maintenance',
     'icons' => [
         [
             'src' => 'images/icon/android-chrome-192x192.png',
@@ -98,7 +98,7 @@ $manifest = [
         [
             'name' => 'About',
             'short_name' => 'About',
-            'description' => 'More info about Wallos',
+            'description' => 'More info about ShelfLife',
             'url' => 'about.php',
             'icons' => [
                 ['src' => 'images/siteicons/pwa/about.png', 'type' => 'image/png', 'sizes' => '96x96'],
@@ -122,7 +122,7 @@ $manifest = [
     'display' => 'standalone',
     'scope' => '/',
     'theme_color' => $themeColor,
-    'description' => 'Wallos is a personal subscription tracker that helps you keep track of your subscriptions and save money.',
+    'description' => 'ShelfLife keeps track of subscriptions, expiry dates and maintenance and reminds you before they are due.',
     'orientation' => 'portrait-primary',
     'display_override' => ['window-controls-overlay'],
 ];

@@ -3,6 +3,8 @@
 // Requires stats_calculations.php to have run first ($subscriptions, $db, $userId, $userData, $i18n, $lang).
 // All monetary values are converted to the main currency. Lifetime figures assume current prices.
 
+require_once __DIR__ . '/shelflife/dates.php';
+
 $monthLabelFormatter = null;
 try {
     $monthLabelFormatter = new IntlDateFormatter($lang, IntlDateFormatter::SHORT, IntlDateFormatter::NONE, null, null, 'MMM yy');
@@ -105,7 +107,14 @@ if (isset($subscriptions)) {
                             $projectionBuckets[$bucketKey]['total'] += $convertedPrice;
                         }
                     }
-                    $paymentDate->modify("+{$frequency} {$cycleStepUnits[$cycle]}");
+                    if ($cycle === 3 || $cycle === 4) {
+                        // ShelfLife: months and years keep the anchor day instead of
+                        // overflowing into the next month (includes/shelflife/dates.php).
+                        $anchorDay = !empty($subscription['anchor_day']) ? (int) $subscription['anchor_day'] : null;
+                        $paymentDate = new DateTime(shelflife_add_period($paymentDate->format('Y-m-d'), $cycle, $frequency, $anchorDay ?? (int) date('j', $paymentTimestamp)));
+                    } else {
+                        $paymentDate->modify("+{$frequency} {$cycleStepUnits[$cycle]}");
+                    }
                     $safety++;
                 }
             }

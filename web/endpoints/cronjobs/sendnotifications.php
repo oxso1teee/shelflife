@@ -464,7 +464,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                     $emailaddress = !empty($user['email']) ? $user['email'] : $defaultEmail;
                     $name = !empty($user['name']) ? $user['name'] : $defaultName;
 
-                    $mail->setFrom($email['fromEmail'], 'Wallos App');
+                    $mail->setFrom($email['fromEmail'], 'ShelfLife');
                     $mail->addAddress($emailaddress, $name);
 
                     if (!empty($email['otherEmails'])) {
@@ -481,7 +481,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         }
                     }
 
-                    $mail->Subject = 'Wallos Notification';
+                    $mail->Subject = 'ShelfLife Notification';
                     $mail->Body = $message;
 
                     if ($mail->send()) {
@@ -613,8 +613,16 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                 }
             }
 
+            // ShelfLife: an account linked to the ShelfLife bot gets its Telegram
+            // reminders from endpoints/cronjobs/sendtelegram.php, one per record with
+            // buttons; this channel would repeat them as a summary.
+            $shelflifeLinkedStmt = $db->prepare('SELECT telegram_id FROM user WHERE id = :id');
+            $shelflifeLinkedStmt->bindValue(':id', $userId, SQLITE3_INTEGER);
+            $shelflifeLinkedRow = $shelflifeLinkedStmt->execute()->fetchArray(SQLITE3_ASSOC);
+            $shelflifeTelegramLinked = $shelflifeLinkedRow !== false && $shelflifeLinkedRow['telegram_id'] !== null;
+
             // Telegram notifications if enabled
-            if ($telegramNotificationsEnabled) {
+            if ($telegramNotificationsEnabled && !$shelflifeTelegramLinked) {
                 foreach ($notify as $payerUserId => $perUser) {
                     // Get name of user from household table
                     $stmt = $db->prepare('SELECT * FROM household WHERE id = :id AND user_id = :ownerId');
@@ -687,7 +695,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                     // Prepare PushPlus Data
                     $data = array(
                         'token' => $pushplus['token'],
-                        'title' => '订阅续期提醒 - Wallos',
+                        'title' => '订阅续期提醒 - ShelfLife',
                         'content' => mb_convert_encoding($messageContent, 'UTF-8', 'auto'),
                         'template' => 'json'
                     );
@@ -980,7 +988,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                     $result = $stmt->execute();
                     $user = $result->fetchArray(SQLITE3_ASSOC);
 
-                    $title = 'Wallos Notification';
+                    $title = 'ShelfLife Notification';
                     $name = $user['name'] ?? "";
                     $message = buildNotificationMessage($name, $perUser, $periodSummaryLine, $sendPeriodStartSummaryOnly);
                     if ($message === "") {
@@ -1051,7 +1059,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         }
 
                         $payload = json_encode([
-                            'title' => 'Wallos Notification',
+                            'title' => 'ShelfLife Notification',
                             'body' => $message,
                         ]);
 

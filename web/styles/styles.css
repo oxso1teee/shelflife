@@ -135,14 +135,24 @@ body>header>.contain {
 }
 
 header .logo .logo-image {
-  height: 50px;
-  width: 134px;
+  height: 40px;
+  width: 206px;
   margin-right: 10px;
 }
 
 header .logo .logo-image svg {
-  height: 50px;
-  width: 134px;
+  height: 40px;
+  width: 206px;
+}
+
+/* The ShelfLife wordmark is wider than Wallos's; keep the header on one line on small phones. */
+@media (max-width: 400px) {
+
+  header .logo .logo-image,
+  header .logo .logo-image svg {
+    height: 30px;
+    width: 155px;
+  }
 }
 
 .button-icon {
@@ -4539,4 +4549,213 @@ body.details-open {
 
 .api-usage-fill.danger {
   background-color: var(--error-color);
+}
+
+/* ShelfLife: Telegram linking on the profile page */
+.telegram-link-result.hide {
+  display: none;
+}
+
+.telegram-link-result {
+  margin-top: 14px;
+}
+
+.telegram-link-qr {
+  display: inline-block;
+  background-color: #fff;
+}
+
+.telegram-link-result code {
+  user-select: all;
+  word-break: break-all;
+}
+
+/* ShelfLife: traffic-light status of records — green, yellow (less than 7 days left), red (overdue) */
+:root {
+  --shelflife-ok: #2e9e5b;
+  --shelflife-soon: #d9a400;
+  --shelflife-overdue: #d64545;
+}
+
+.subscription.shelflife-status-ok,
+.subscription-item.shelflife-status-ok {
+  border-left: 5px solid var(--shelflife-ok);
+}
+
+.subscription.shelflife-status-soon,
+.subscription-item.shelflife-status-soon {
+  border-left: 5px solid var(--shelflife-soon);
+}
+
+.subscription.shelflife-status-overdue,
+.subscription-item.shelflife-status-overdue {
+  border-left: 5px solid var(--shelflife-overdue);
+}
+
+.subscription .next .shelflife-days-left {
+  display: block;
+  font-size: 0.75em;
+  opacity: 0.8;
+}
+
+.shelflife-status-soon .shelflife-days-left {
+  color: var(--shelflife-soon);
+}
+
+.shelflife-status-overdue .shelflife-days-left {
+  color: var(--shelflife-overdue);
+}
+
+.subscription-item .shelflife-days-left,
+.subscription-item .subscription-item-kind {
+  font-size: 0.8em;
+  margin: 0;
+}
+
+/* ShelfLife: list rows. The kind label and the days left made rows wider than a
+   phone screen: the name shrank to nothing and the menu button was pushed out
+   of the card. The grid view has its own layout and is left as it is. */
+.subscriptions:not(.grid-view) .subscription-main>.next {
+  flex-direction: column;
+}
+
+.subscription .next .shelflife-days-left {
+  text-transform: none;
+}
+
+/* In a narrow card the days left go under the date rather than squeezing it. */
+.subscriptions.grid-view .subscription-main>.next {
+  flex-wrap: wrap;
+}
+
+.subscriptions.grid-view .subscription-main>.next .shelflife-days-left {
+  display: inline;
+  margin-inline-start: 6px;
+  white-space: nowrap;
+}
+
+@media (max-width: 768px) {
+
+  .subscriptions:not(.grid-view) .subscription-main {
+    gap: 8px;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>span {
+    min-width: 0;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.name:not(.hideOnMobile) {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    flex: 1 1 17%;
+    max-height: none;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-align: start;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.cycle,
+  .subscriptions:not(.grid-view) .subscription-main>.next {
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.price {
+    flex: 0 0 auto;
+    font-size: 15px;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.payment_method {
+    margin-left: 0;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.payment_method img {
+    width: 36px;
+    height: 24px;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main .actions-expand {
+    flex: 0 0 auto;
+    padding: 8px 6px;
+  }
+}
+
+/* Phones: two lines - the name, price and menu button; then the kind and
+   period, the date and days left, and the payment method. */
+@media (max-width: 560px) {
+
+  .subscriptions:not(.grid-view) .subscription-main {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main::after {
+    content: "";
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.logo:not(.hideOnMobile),
+  .subscriptions:not(.grid-view) .subscription-main>.name:not(.hideOnMobile) {
+    order: 1;
+    flex: 1 1 0;
+    justify-content: flex-start;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.name:not(.hideOnMobile) {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.logo img {
+    object-position: left center;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.price,
+  .subscriptions:not(.grid-view) .subscription-main .actions-expand {
+    order: 2;
+  }
+
+  /* Wallos hides this column below 376px; on its own line it fits. */
+  .subscriptions:not(.grid-view) .subscription-main>.cycle {
+    display: flex;
+    order: 4;
+    flex: 1 1 0;
+    justify-content: flex-start;
+    text-align: start;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.next {
+    order: 5;
+    flex: 0 1 auto;
+    align-items: flex-end;
+    text-align: end;
+    font-size: 13px;
+  }
+
+  .subscriptions:not(.grid-view) .subscription-main>.payment_method {
+    order: 6;
+  }
+}
+
+/* The toolbar above the list (search, filter, sort, list/grid) was 360px wide
+   and made the page scroll sideways on 320-375px phones. */
+@media (max-width: 400px) {
+
+  .top-actions {
+    gap: 8px;
+  }
+
+  .top-actions .button.secondary-button {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .top-actions .view-toggle-button {
+    padding: 0px 10px;
+  }
 }

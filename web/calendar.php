@@ -205,6 +205,24 @@ if ($weekStartsSunday) {
         continue;
       }
 
+      if ($cycle == 3 || $cycle == 4) {
+        // ShelfLife: a monthly or yearly payment falls in this month when the month
+        // is a whole number of periods away from the next payment, on its anchor
+        // day clamped to the month's length (includes/shelflife/dates.php). Stepping
+        // with strtotime("+1 month") moved a payment on the 31st into the next month.
+        $stepMonths = $cycle == 3 ? (int) $frequency : 12 * (int) $frequency;
+        $nextPaymentMonth = (int) date('Y', $nextPaymentDate) * 12 + (int) date('n', $nextPaymentDate) - 1;
+        $monthOffset = ((int) $calendarYear * 12 + (int) $calendarMonth - 1) - $nextPaymentMonth;
+        if ($stepMonths > 0 && $monthOffset % $stepMonths === 0 && $monthOffset <= 12 * $yearsToLoad) {
+          $anchorDay = !empty($subscription['anchor_day']) ? (int) $subscription['anchor_day'] : (int) date('j', $nextPaymentDate);
+          $paymentDate = mktime(0, 0, 0, (int) $calendarMonth, min($anchorDay, $daysInMonth), (int) $calendarYear);
+          if ($paymentDate >= $subscriptionStartDate) {
+            $registerPayment($paymentDate, $subscription);
+          }
+        }
+        continue;
+      }
+
       switch ($cycle) {
         case 1: // Days
           $incrementString = "+{$frequency} days";
@@ -323,7 +341,7 @@ if ($weekStartsSunday) {
 </section>
 
 <?php require_once 'includes/subscription_details_popup.php'; ?>
-<script src="scripts/calendar.js?<?= $version ?>"></script>
+<script src="scripts/calendar.js?<?= $assetVersion ?>"></script>
 <?php
 require_once 'includes/footer.php';
 ?>

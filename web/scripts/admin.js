@@ -123,7 +123,7 @@ function backupDB() {
       const hours = String(date.getHours()).padStart(2, "0");
       const minutes = String(date.getMinutes()).padStart(2, "0");
       const timestamp = `${year}${month}${day}-${hours}${minutes}`;
-      link.download = `Wallos-Backup-${timestamp}.zip`;
+      link.download = `ShelfLife-Backup-${timestamp}.zip`;
 
       document.body.appendChild(link);
       link.click();

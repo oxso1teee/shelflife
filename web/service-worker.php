@@ -5,11 +5,17 @@ if (!headers_sent()) {
     header('Cache-Control: no-cache');
 }
 ?>
-// STATIC_CACHE is tied to the app version (rather than a hand-bumped literal)
-// so every release invalidates stale precached assets automatically - a release
-// that changed JS/CSS without remembering to bump a hardcoded cache version
-// used to leave already-visited browsers stuck on old cached files indefinitely.
-const STATIC_CACHE = 'static-cache-<?= $version ?>';
+// STATIC_CACHE is tied to the version of the static files (rather than a
+// hand-bumped literal) so every change invalidates stale precached assets
+// automatically - a release that changed JS/CSS without remembering to bump a
+// hardcoded cache version used to leave already-visited browsers stuck on old
+// cached files indefinitely. ShelfLife: $assetVersion is the Wallos version plus
+// a hash of the files' contents (includes/shelflife/asset_version.php), so a
+// changed stylesheet, script or icon also gives this worker a new cache name:
+// browsers install it, precache the new files, and activate drops only the
+// previous static cache (PAGES_CACHE and LOGOS_CACHE are kept).
+const ASSET_VERSION = '<?= $assetVersion ?>';
+const STATIC_CACHE = 'static-cache-<?= $assetVersion ?>';
 const PAGES_CACHE = 'pages-cache-v1';
 const LOGOS_CACHE = 'logos-cache-v2';
 
@@ -95,8 +101,8 @@ const staticAssets = [
     'images/icon/apple-touch-icon-152.png',
     'images/icon/apple-touch-icon.png',
     'images/screenshots/desktop.png',
-    'images/siteicons/wallos.png',
-    'images/siteicons/walloswhite.png',
+    'images/siteicons/shelflife.png',
+    'images/siteicons/shelflifewhite.png',
     'images/siteimages/empty.png',
     'images/siteimages/mobilenav.png',
     'images/siteimages/mobilenavdark.png',
@@ -278,6 +284,13 @@ self.addEventListener('fetch', function (event) {
     // once-missed asset would never get cached and its feature (e.g. the
     // stats charts) would stay broken offline forever.
     if (staticAssets.some(asset => url.pathname.endsWith(asset))) {
+        // ShelfLife: a page newer than this worker asks for "?<its version>".
+        // Serve that request from the network (the cached copy only offline)
+        // rather than this worker's older file until the new worker takes over.
+        if (url.search !== '' && url.search !== '?' + ASSET_VERSION) {
+            event.respondWith(fetch(request).catch(() => caches.match(request, { ignoreSearch: true })));
+            return;
+        }
         event.respondWith(
             caches.match(request, { ignoreSearch: true }).then(cached => {
                 if (cached) return cached;
@@ -321,11 +334,11 @@ self.addEventListener('push', function (event) {
         try {
             data = event.data.json();
         } catch (e) {
-            data = { title: 'Wallos', body: event.data.text() };
+            data = { title: 'ShelfLife', body: event.data.text() };
         }
     }
 
-    const title = data.title || 'Wallos';
+    const title = data.title || 'ShelfLife';
     const options = {
         body: data.body || '',
         icon: 'images/icon/android-chrome-192x192.png',

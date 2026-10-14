@@ -11,7 +11,9 @@ For 'add' and 'edit' actions (all optional for 'edit'):
 - price: the price of the subscription (float).
 - currency_id: the currency ID of the subscription (integer).
 - frequency: the payment frequency (integer).
-- cycle: the payment cycle (integer: 1-days, 2-weeks, 3-months, 4-years).
+- cycle: the payment cycle (integer: 1-days, 2-weeks, 3-months, 4-years, 5-one-time).
+- kind: what the record tracks: "subscription" (default), "expiry" or "maintenance".
+  Only subscriptions require a price; a one-time record needs no frequency.
 - next_payment: the next payment date (YYYY-MM-DD).
 - start_date: the start date of the subscription (YYYY-MM-DD).
 - auto_renew: whether the subscription auto renews (1 or 0, default 1).
@@ -317,11 +319,6 @@ function resizeAndUploadLogo($uploadedFile, $uploadDir, $name, $settings)
     return "";
 }
 
-function validateDate($date, $format = 'Y-m-d') {
-    $d = DateTime::createFromFormat($format, $date);
-    return $d && $d->format($format) === $date;
-}
-
 // Themed variant generation piggybacks on the same "remove background"
 // setting: both only make sense for logos we're already reprocessing, and
 // this avoids running pixel classification on every single upload.
@@ -358,45 +355,55 @@ function generateLogoThemeVariant($logo, $removeBackgroundEnabled)
     return [$logoTextColor, $logoVariant];
 }
 
+require_once '../../includes/shelflife/subscription_service.php';
+
+/**
+ * ShelfLife: the API fields a request may set, keyed by column. Only the keys
+ * actually posted are passed on, so an edit changes just what was sent.
+ */
+function shelflife_api_input()
+{
+    $input = [];
+    foreach ([
+        'name', 'price', 'currency_id', 'frequency', 'cycle', 'next_payment', 'start_date', 'auto_renew',
+        'payment_method_id', 'payer_user_id', 'category_id', 'notes', 'url', 'notify_days_before',
+        'inactive', 'cancellation_date', 'replacement_subscription_id', 'kind',
+    ] as $field) {
+        if (isset($_POST[$field])) {
+            $input[$field] = $_POST[$field];
+        }
+    }
+    if (isset($_POST['notify']) || isset($_POST['notifications'])) {
+        $input['notify'] = $_POST['notify'] ?? $_POST['notifications'];
+    }
+
+    return $input;
+}
+
+function shelflife_api_reject(ShelfLifeValidationError $e)
+{
+    echo json_encode([
+        'success' => false,
+        'title' => 'Invalid parameter',
+        'message' => $e->getMessage()
+    ]);
+    exit;
+}
+
 switch ($action) {
     case 'add':
-        $name = $_POST['name'] ?? null;
-        $price = $_POST['price'] ?? null;
-        $currencyId = $_POST['currency_id'] ?? null;
-        $frequency = $_POST['frequency'] ?? null;
-        $cycle = $_POST['cycle'] ?? null;
-        $nextPayment = $_POST['next_payment'] ?? null;
-        $startDate = $_POST['start_date'] ?? date('Y-m-d');
-        
-        $autoRenew = $_POST['auto_renew'] ?? '1';
-        $autoRenew = ($autoRenew === '0' || $autoRenew === 0) ? 0 : 1;
-
-        $paymentMethodId = $_POST['payment_method_id'] ?? null;
-        $payerUserId = $_POST['payer_user_id'] ?? null;
-        $categoryId = $_POST['category_id'] ?? null;
-        
-        $notes = isset($_POST['notes']) ? validate_markdown($_POST['notes']) : '';
-        $url = isset($_POST['url']) ? validate($_POST['url']) : '';
-        
-        $notify = $_POST['notify'] ?? $_POST['notifications'] ?? '0';
-        $notify = ($notify === '1' || $notify === 1) ? 1 : 0;
-        $notifyDaysBefore = isset($_POST['notify_days_before']) ? ($_POST['notify_days_before'] === '' ? null : intval($_POST['notify_days_before'])) : null;
-        
-        $inactive = $_POST['inactive'] ?? '0';
-        $inactive = ($inactive === '1' || $inactive === 1) ? 1 : 0;
-        
-        $cancellationDate = $_POST['cancellation_date'] ?? null;
-        if ($cancellationDate === '') {
-            $cancellationDate = null;
+        $input = shelflife_api_input();
+        if (!isset($input['start_date'])) {
+            $input['start_date'] = date('Y-m-d');
         }
 
-        $replacementSubscriptionId = $_POST['replacement_subscription_id'] ?? null;
-        if ($replacementSubscriptionId === '0' || $replacementSubscriptionId === 0 || $replacementSubscriptionId === '' || $inactive === 0) {
-            $replacementSubscriptionId = null;
-        }
-
-        // Validate required fields
-        if (!$name || trim($name) === '' || $price === null || !$currencyId || !$frequency || !$cycle || !$nextPayment) {
+        // Validate required fields. A price and a frequency are only needed for
+        // what is paid for and what repeats.
+        $kind = $input['kind'] ?? SHELFLIFE_KIND_SUBSCRIPTION;
+        $needsPrice = $kind === SHELFLIFE_KIND_SUBSCRIPTION;
+        $needsFrequency = (string) ($input['cycle'] ?? '') !== (string) SHELFLIFE_CYCLE_ONE_TIME;
+        if (empty($input['name']) || trim($input['name']) === '' || ($needsPrice && !isset($input['price'])) || empty($input['currency_id'])
+            || ($needsFrequency && empty($input['frequency'])) || empty($input['cycle']) || empty($input['next_payment'])) {
             echo json_encode([
                 'success' => false,
                 'title' => 'Missing parameters',
@@ -405,124 +412,12 @@ switch ($action) {
             exit;
         }
 
-        $name = validate($name);
-        $price = floatval($price);
-        $currencyId = intval($currencyId);
-        $frequency = intval($frequency);
-        $cycle = intval($cycle);
-
-        if (!in_array($cycle, [1, 2, 3, 4], true)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid parameter',
-                'message' => 'Parameter "cycle" must be 1 (Days), 2 (Weeks), 3 (Months), or 4 (Years).'
-            ]);
-            exit;
+        try {
+            $subscriptionData = shelflife_subscription_prepare($db, $userId, $input);
+        } catch (ShelfLifeValidationError $e) {
+            shelflife_api_reject($e);
         }
-
-        // Validate Dates
-        if (!validateDate($nextPayment)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "next_payment" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-        if ($startDate && !validateDate($startDate)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "start_date" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-        if ($cancellationDate && !validateDate($cancellationDate)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "cancellation_date" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-
-        // Validate Foreign Keys
-        // Currency
-        $currStmt = $db->prepare("SELECT id FROM currencies WHERE id = :id AND user_id = :userId");
-        $currStmt->bindValue(':id', $currencyId, SQLITE3_INTEGER);
-        $currStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-        $currRes = $currStmt->execute()->fetchArray();
-        if (!$currRes) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid currency ID',
-                'message' => 'The specified currency does not exist or does not belong to you.'
-            ]);
-            exit;
-        }
-
-        // Category
-        if ($categoryId !== null) {
-            $categoryId = intval($categoryId);
-            $catStmt = $db->prepare("SELECT id FROM categories WHERE id = :id AND user_id = :userId");
-            $catStmt->bindValue(':id', $categoryId, SQLITE3_INTEGER);
-            $catStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $catRes = $catStmt->execute()->fetchArray();
-            if (!$catRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid category ID',
-                    'message' => 'The specified category does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Payer user
-        if ($payerUserId !== null) {
-            $payerUserId = intval($payerUserId);
-            $payerStmt = $db->prepare("SELECT id FROM household WHERE id = :id AND user_id = :userId");
-            $payerStmt->bindValue(':id', $payerUserId, SQLITE3_INTEGER);
-            $payerStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $payerRes = $payerStmt->execute()->fetchArray();
-            if (!$payerRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid payer ID',
-                    'message' => 'The specified household member does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Payment Method
-        if ($paymentMethodId !== null) {
-            $paymentMethodId = intval($paymentMethodId);
-            $pmStmt = $db->prepare("SELECT id FROM payment_methods WHERE id = :id AND (user_id = :userId OR user_id = 0 OR user_id IS NULL)");
-            $pmStmt->bindValue(':id', $paymentMethodId, SQLITE3_INTEGER);
-            $pmStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $pmRes = $pmStmt->execute()->fetchArray();
-            if (!$pmRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid payment method ID',
-                    'message' => 'The specified payment method does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Replacement Subscription
-        if ($replacementSubscriptionId !== null) {
-            $replacementSubscriptionId = intval($replacementSubscriptionId);
-            $repStmt = $db->prepare("SELECT id FROM subscriptions WHERE id = :id AND user_id = :userId");
-            $repStmt->bindValue(':id', $replacementSubscriptionId, SQLITE3_INTEGER);
-            $repStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $repRes = $repStmt->execute()->fetchArray();
-            if (!$repRes) {
-                $replacementSubscriptionId = null;
-            }
-        }
+        $name = $subscriptionData['name'];
 
         // Process Logo
         $logo = '';
@@ -548,46 +443,23 @@ switch ($action) {
         [$logoTextColor, $logoVariant] = generateLogoThemeVariant($logo, $removeBackgroundEnabled);
 
         // Insert
-        $sqlInsert = "INSERT INTO subscriptions (
-                            name, logo, price, currency_id, next_payment, cycle, frequency, notes,
-                            payment_method_id, payer_user_id, category_id, notify, inactive, url,
-                            notify_days_before, user_id, cancellation_date, replacement_subscription_id,
-                            auto_renew, start_date, logo_text_color, logo_variant
-                        ) VALUES (
-                            :name, :logo, :price, :currencyId, :nextPayment, :cycle, :frequency, :notes,
-                            :paymentMethodId, :payerUserId, :categoryId, :notify, :inactive, :url,
-                            :notifyDaysBefore, :userId, :cancellationDate, :replacement_subscription_id,
-                            :autoRenew, :startDate, :logoTextColor, :logoVariant
-                        )";
-        $stmtInsert = $db->prepare($sqlInsert);
-        $stmtInsert->bindParam(':name', $name, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':logo', $logo, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':logoTextColor', $logoTextColor, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':logoVariant', $logoVariant, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':price', $price, SQLITE3_FLOAT);
-        $stmtInsert->bindParam(':currencyId', $currencyId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':nextPayment', $nextPayment, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':cycle', $cycle, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':frequency', $frequency, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':notes', $notes, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':paymentMethodId', $paymentMethodId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':payerUserId', $payerUserId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':categoryId', $categoryId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':notify', $notify, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':inactive', $inactive, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':url', $url, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':notifyDaysBefore', $notifyDaysBefore, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':userId', $userId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':cancellationDate', $cancellationDate, SQLITE3_TEXT);
-        $stmtInsert->bindParam(':replacement_subscription_id', $replacementSubscriptionId, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':autoRenew', $autoRenew, SQLITE3_INTEGER);
-        $stmtInsert->bindParam(':startDate', $startDate, SQLITE3_TEXT);
+        try {
+            $newSubscriptionId = shelflife_subscription_insert($db, $userId, $subscriptionData, [
+                'logo' => $logo,
+                'logo_text_color' => $logoTextColor,
+                'logo_variant' => $logoVariant,
+            ]);
+            $inserted = true;
+        } catch (RuntimeException $e) {
+            $inserted = false;
+            $insertError = $e->getMessage();
+        }
 
-        if ($stmtInsert->execute()) {
+        if ($inserted) {
             $addResponse = [
                 'success' => true,
                 'title' => 'Subscription added',
-                'subscriptionId' => $db->lastInsertRowID(),
+                'subscriptionId' => $newSubscriptionId,
                 'message' => 'Subscription added successfully.'
             ];
             if ($logoWarning !== '') {
@@ -598,7 +470,7 @@ switch ($action) {
             echo json_encode([
                 'success' => false,
                 'title' => 'Database error',
-                'message' => 'Failed to add subscription: ' . $db->lastErrorMsg()
+                'message' => $insertError
             ]);
         }
         break;
@@ -632,195 +504,13 @@ switch ($action) {
             exit;
         }
 
-        // Merge existing values with incoming POST parameters
-        $name = isset($_POST['name']) ? validate($_POST['name']) : $subscription['name'];
-        $price = isset($_POST['price']) ? floatval($_POST['price']) : $subscription['price'];
-        $currencyId = isset($_POST['currency_id']) ? intval($_POST['currency_id']) : $subscription['currency_id'];
-        $frequency = isset($_POST['frequency']) ? intval($_POST['frequency']) : $subscription['frequency'];
-        $cycle = isset($_POST['cycle']) ? intval($_POST['cycle']) : $subscription['cycle'];
-        $nextPayment = isset($_POST['next_payment']) ? $_POST['next_payment'] : $subscription['next_payment'];
-        
-        $autoRenew = $subscription['auto_renew'];
-        if (isset($_POST['auto_renew'])) {
-            $autoRenew = ($_POST['auto_renew'] === '0' || $_POST['auto_renew'] === 0) ? 0 : 1;
+        // Only the posted fields change; the rest keeps the stored values.
+        try {
+            $subscriptionData = shelflife_subscription_prepare($db, $userId, shelflife_api_input(), $subscription);
+        } catch (ShelfLifeValidationError $e) {
+            shelflife_api_reject($e);
         }
-        
-        $startDate = isset($_POST['start_date']) ? $_POST['start_date'] : $subscription['start_date'];
-        
-        $paymentMethodId = $subscription['payment_method_id'];
-        if (isset($_POST['payment_method_id'])) {
-            $paymentMethodId = $_POST['payment_method_id'] === '' ? null : intval($_POST['payment_method_id']);
-        }
-
-        $payerUserId = $subscription['payer_user_id'];
-        if (isset($_POST['payer_user_id'])) {
-            $payerUserId = $_POST['payer_user_id'] === '' ? null : intval($_POST['payer_user_id']);
-        }
-
-        $categoryId = $subscription['category_id'];
-        if (isset($_POST['category_id'])) {
-            $categoryId = $_POST['category_id'] === '' ? null : intval($_POST['category_id']);
-        }
-
-        $notes = isset($_POST['notes']) ? validate_markdown($_POST['notes']) : $subscription['notes'];
-        $url = isset($_POST['url']) ? validate($_POST['url']) : $subscription['url'];
-
-        $notify = $subscription['notify'];
-        if (isset($_POST['notify']) || isset($_POST['notifications'])) {
-            $valNotify = $_POST['notify'] ?? $_POST['notifications'];
-            $notify = ($valNotify === '1' || $valNotify === 1) ? 1 : 0;
-        }
-
-        $notifyDaysBefore = $subscription['notify_days_before'];
-        if (isset($_POST['notify_days_before'])) {
-            $notifyDaysBefore = $_POST['notify_days_before'] === '' ? null : intval($_POST['notify_days_before']);
-        }
-
-        $inactive = $subscription['inactive'];
-        if (isset($_POST['inactive'])) {
-            $inactive = ($_POST['inactive'] === '1' || $_POST['inactive'] === 1) ? 1 : 0;
-        }
-
-        $cancellationDate = $subscription['cancellation_date'];
-        if (isset($_POST['cancellation_date'])) {
-            $cancellationDate = $_POST['cancellation_date'] === '' ? null : $_POST['cancellation_date'];
-        }
-
-        $replacementSubscriptionId = $subscription['replacement_subscription_id'];
-        if (isset($_POST['replacement_subscription_id'])) {
-            $replacementSubscriptionId = ($_POST['replacement_subscription_id'] === '' || $_POST['replacement_subscription_id'] === '0' || $_POST['replacement_subscription_id'] === 0) ? null : intval($_POST['replacement_subscription_id']);
-        }
-
-        if ($replacementSubscriptionId == 0 || $inactive == 0) {
-            $replacementSubscriptionId = null;
-        }
-
-        // Validate values
-        if (trim($name) === '') {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid name',
-                'message' => 'Subscription name cannot be empty.'
-            ]);
-            exit;
-        }
-
-        if (!in_array($cycle, [1, 2, 3, 4], true)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid cycle',
-                'message' => 'Parameter "cycle" must be 1 (Days), 2 (Weeks), 3 (Months), or 4 (Years).'
-            ]);
-            exit;
-        }
-
-        // Validate Dates
-        if (!validateDate($nextPayment)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "next_payment" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-        if ($startDate && !validateDate($startDate)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "start_date" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-        if ($cancellationDate && !validateDate($cancellationDate)) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid date',
-                'message' => 'Parameter "cancellation_date" must be a valid date in YYYY-MM-DD format.'
-            ]);
-            exit;
-        }
-
-        // Validate Foreign Keys
-        // Currency
-        $currStmt = $db->prepare("SELECT id FROM currencies WHERE id = :id AND user_id = :userId");
-        $currStmt->bindValue(':id', $currencyId, SQLITE3_INTEGER);
-        $currStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-        $currRes = $currStmt->execute()->fetchArray();
-        if (!$currRes) {
-            echo json_encode([
-                'success' => false,
-                'title' => 'Invalid currency ID',
-                'message' => 'The specified currency does not exist or does not belong to you.'
-            ]);
-            exit;
-        }
-
-        // Category
-        if ($categoryId !== null) {
-            $catStmt = $db->prepare("SELECT id FROM categories WHERE id = :id AND user_id = :userId");
-            $catStmt->bindValue(':id', $categoryId, SQLITE3_INTEGER);
-            $catStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $catRes = $catStmt->execute()->fetchArray();
-            if (!$catRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid category ID',
-                    'message' => 'The specified category does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Payer
-        if ($payerUserId !== null) {
-            $payerStmt = $db->prepare("SELECT id FROM household WHERE id = :id AND user_id = :userId");
-            $payerStmt->bindValue(':id', $payerUserId, SQLITE3_INTEGER);
-            $payerStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $payerRes = $payerStmt->execute()->fetchArray();
-            if (!$payerRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid payer ID',
-                    'message' => 'The specified household member does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Payment Method
-        if ($paymentMethodId !== null) {
-            $pmStmt = $db->prepare("SELECT id FROM payment_methods WHERE id = :id AND (user_id = :userId OR user_id = 0 OR user_id IS NULL)");
-            $pmStmt->bindValue(':id', $paymentMethodId, SQLITE3_INTEGER);
-            $pmStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $pmRes = $pmStmt->execute()->fetchArray();
-            if (!$pmRes) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid payment method ID',
-                    'message' => 'The specified payment method does not exist or does not belong to you.'
-                ]);
-                exit;
-            }
-        }
-
-        // Replacement Subscription
-        if ($replacementSubscriptionId !== null) {
-            if ($replacementSubscriptionId === $subscriptionId) {
-                echo json_encode([
-                    'success' => false,
-                    'title' => 'Invalid replacement ID',
-                    'message' => 'A subscription cannot be replaced by itself.'
-                ]);
-                exit;
-            }
-            $repStmt = $db->prepare("SELECT id FROM subscriptions WHERE id = :id AND user_id = :userId");
-            $repStmt->bindValue(':id', $replacementSubscriptionId, SQLITE3_INTEGER);
-            $repStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $repRes = $repStmt->execute()->fetchArray();
-            if (!$repRes) {
-                $replacementSubscriptionId = null;
-            }
-        }
+        $name = $subscriptionData['name'];
 
         // Process Logo
         $logo = $subscription['logo'];
@@ -855,56 +545,19 @@ switch ($action) {
         }
 
         // Update
-        $sqlUpdate = "UPDATE subscriptions SET
-                            name = :name,
-                            logo = :logo,
-                            logo_text_color = :logoTextColor,
-                            logo_variant = :logoVariant,
-                            price = :price,
-                            currency_id = :currencyId,
-                            next_payment = :nextPayment,
-                            auto_renew = :autoRenew,
-                            start_date = :startDate,
-                            cycle = :cycle,
-                            frequency = :frequency,
-                            notes = :notes,
-                            payment_method_id = :paymentMethodId,
-                            payer_user_id = :payerUserId,
-                            category_id = :categoryId,
-                            notify = :notify,
-                            inactive = :inactive,
-                            url = :url,
-                            notify_days_before = :notifyDaysBefore,
-                            cancellation_date = :cancellationDate,
-                            replacement_subscription_id = :replacement_subscription_id
-                       WHERE id = :id AND user_id = :userId";
+        try {
+            shelflife_subscription_update($db, $userId, $subscriptionId, $subscriptionData, [
+                'logo' => $logo,
+                'logo_text_color' => $logoTextColor,
+                'logo_variant' => $logoVariant,
+            ]);
+            $updated = true;
+        } catch (RuntimeException $e) {
+            $updated = false;
+            $updateError = $e->getMessage();
+        }
 
-        $stmtUpdate = $db->prepare($sqlUpdate);
-        $stmtUpdate->bindParam(':name', $name, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':logo', $logo, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':logoTextColor', $logoTextColor, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':logoVariant', $logoVariant, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':price', $price, SQLITE3_FLOAT);
-        $stmtUpdate->bindParam(':currencyId', $currencyId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':nextPayment', $nextPayment, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':autoRenew', $autoRenew, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':startDate', $startDate, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':cycle', $cycle, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':frequency', $frequency, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':notes', $notes, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':paymentMethodId', $paymentMethodId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':payerUserId', $payerUserId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':categoryId', $categoryId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':notify', $notify, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':inactive', $inactive, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':url', $url, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':notifyDaysBefore', $notifyDaysBefore, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':cancellationDate', $cancellationDate, SQLITE3_TEXT);
-        $stmtUpdate->bindParam(':replacement_subscription_id', $replacementSubscriptionId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':id', $subscriptionId, SQLITE3_INTEGER);
-        $stmtUpdate->bindParam(':userId', $userId, SQLITE3_INTEGER);
-
-        if ($stmtUpdate->execute()) {
+        if ($updated) {
             $updateResponse = [
                 'success' => true,
                 'title' => 'Subscription updated',
@@ -918,7 +571,7 @@ switch ($action) {
             echo json_encode([
                 'success' => false,
                 'title' => 'Database error',
-                'message' => 'Failed to update subscription: ' . $db->lastErrorMsg()
+                'message' => $updateError
             ]);
         }
         break;

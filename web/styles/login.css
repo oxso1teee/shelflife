@@ -52,14 +52,14 @@ textarea {
 }
 
 header .logo-image {
-  height: 80px;
-  width: 215px;
+  height: 47px;
+  width: 240px;
   margin: 0px auto;
 }
 
 header .logo-image svg {
-  height: 80px;
-  width: 215px;
+  height: 47px;
+  width: 240px;
 }
 
 .container > .message {
@@ -585,8 +585,8 @@ input[type="checkbox"]:checked+label::after {
     }
 
     .auth-brand-logo svg {
-        width: 190px;
-        height: 71px;
+        width: 240px;
+        height: 47px;
     }
 
     .auth-brand svg .main-color {
@@ -706,4 +706,11 @@ input[type="checkbox"]:checked+label::after {
 .rtl .theme-toggle {
     right: auto;
     left: 16px;
+}
+
+/* ShelfLife: Telegram Login Widget under the sign-in button */
+.login-form-telegram {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
 }

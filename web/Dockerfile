@@ -15,6 +15,10 @@ RUN apk upgrade --no-cache && \
 # Copy your PHP application files into the container
 COPY . .
 
+# ShelfLife: hash of the static files' contents, the cache-busting version of
+# CSS, JS and images (includes/shelflife/asset_version.php)
+RUN php -r 'require "includes/shelflife/asset_version.php"; file_put_contents("includes/shelflife/asset_revision.php", "<?php return " . var_export(shelflife_asset_revision_compute(getcwd()), true) . ";\n");'
+
 # Copy Nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY nginx.default.conf /etc/nginx/http.d/default.conf

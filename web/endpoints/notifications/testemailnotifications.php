@@ -95,7 +95,7 @@ if (
     $email = $user['email'];
     $name = $user['username'];
 
-    $mail->setFrom($fromEmail, 'Wallos App');
+    $mail->setFrom($fromEmail, 'ShelfLife');
     $mail->addAddress($email, $name);
 
     $mail->Subject = translate('wallos_notification', $i18n);

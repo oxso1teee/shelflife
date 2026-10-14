@@ -604,7 +604,7 @@ $loginDisabledAllowed = $userCount == 1 && $settings['registrations_open'] == 0;
     </section>
 
 </section>
-<script src="scripts/admin.js?<?= $version ?>"></script>
+<script src="scripts/admin.js?<?= $assetVersion ?>"></script>
 
 <?php
 require_once 'includes/footer.php';

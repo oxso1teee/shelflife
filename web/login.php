@@ -159,10 +159,20 @@ $loginFailed = false;
 $hasSuccessMessage = (isset($_GET['validated']) && $_GET['validated'] == "true") || (isset($_GET['registered']) && $_GET['registered'] == true) ? true : false;
 $userEmailWaitingVerification = false;
 $oidcEmailNotVerified = false;
+$loginThrottled = false;
+require_once 'includes/shelflife/login_throttle.php';
+require_once 'includes/shelflife/session.php';
+require_once 'includes/instance_config.php';
+$telegramLoginError = null;
 if (isset($_POST['username']) && isset($_POST['password']) && $password_login_disabled) {
     // SSO-only is enforced here, not just by hiding the form: a direct POST
     // must not be able to authenticate with a local password.
     $loginFailed = true;
+} elseif (isset($_POST['username']) && isset($_POST['password']) && shelflife_login_is_throttled($db, (string) $_POST['username'], time())) {
+    // ShelfLife: too many wrong passwords for this username in the last 15
+    // minutes. The password is not checked at all until the lock expires.
+    $loginFailed = true;
+    $loginThrottled = true;
 } elseif (isset($_POST['username']) && isset($_POST['password'])) {
     $username = $_POST['username'];
     $password = $_POST['password'];
@@ -180,89 +190,27 @@ if (isset($_POST['username']) && isset($_POST['password']) && $password_login_di
         $main_currency = $row['main_currency'];
         $language = $row['language'];
         if (password_verify($password, $hashedPasswordFromDb)) {
+            shelflife_login_clear_failures($db, $username);
 
-            // Check if the user is in the email_verification table
-            $query = "SELECT 1 FROM email_verification WHERE user_id = :userId";
-            $stmt = $db->prepare($query);
-            $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $result = $stmt->execute();
-            $verificationMissing = $result->fetchArray(SQLITE3_ASSOC);
-
-            // Check if the user has 2fa enabled
-            $query = "SELECT totp_enabled FROM user WHERE id = :userId";
-            $stmt = $db->prepare($query);
-            $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-            $result = $stmt->execute();
-            $totpEnabled = $result->fetchArray(SQLITE3_ASSOC);
-
-            if ($verificationMissing) {
+            // ShelfLife: the sign-in steps after a correct password live in
+            // includes/shelflife/session.php, shared with the Telegram login.
+            $loginResult = shelflife_complete_login($db, $userId, $username, $main_currency, $language, $rememberMe);
+            if ($loginResult === 'unverified') {
                 $userEmailWaitingVerification = true;
                 $loginFailed = true;
             } else {
-                if ($totpEnabled['totp_enabled'] == 1) {
-                    $_SESSION['totp_user_id'] = $userId;
-                    if ($rememberMe) {
-                        $_SESSION['pending_remember_me'] = true; // defer cookie until TOTP done
-                    }
-                    $db->close();
-                    header("Location: totp.php");
-                    exit();
-                }
-
-                // No TOTP — safe to create remember-me token now
-                if ($rememberMe) {
-                    $token = bin2hex(random_bytes(32));
-                    $addLoginTokens = "INSERT INTO login_tokens (user_id, token) VALUES (:userId, :token)";
-                    $addLoginTokensStmt = $db->prepare($addLoginTokens);
-                    $addLoginTokensStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
-                    $addLoginTokensStmt->bindParam(':token', $token, SQLITE3_TEXT);
-                    $addLoginTokensStmt->execute();
-                    $_SESSION['token'] = $token;
-                    $cookieValue = $username . "|" . $token . "|" . $main_currency;
-                    setcookie('wallos_login', $cookieValue, [
-                        'expires' => $cookieExpire,
-                        'samesite' => 'Lax',
-                        'httponly' => true,
-                    ]);
-                }
-
-                session_regenerate_id(true);
-                $_SESSION['username'] = $username;
-                $_SESSION['loggedin'] = true;
-                $_SESSION['main_currency'] = $main_currency;
-                $_SESSION['userId'] = $userId;
-                setcookie('language', $language, [
-                    'expires' => $cookieExpire,
-                    'samesite' => 'Lax'
-                ]);
-
-                if (!isset($_COOKIE['sortOrder'])) {
-                    setcookie('sortOrder', 'next_payment', [
-                        'expires' => $cookieExpire,
-                        'samesite' => 'Lax'
-                    ]);
-                }
-
-                $query = "SELECT color_theme FROM settings WHERE user_id = :userId";
-                $stmt = $db->prepare($query);
-                $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
-                $result = $stmt->execute();
-                $settings = $result->fetchArray(SQLITE3_ASSOC);
-                setcookie('colorTheme', $settings['color_theme'], [
-                    'expires' => $cookieExpire,
-                    'samesite' => 'Lax'
-                ]);
-
                 $db->close();
-                header("Location: .");
+                header('Location: ' . ($loginResult === 'totp' ? 'totp.php' : '.'));
                 exit();
             }
 
         } else {
             $loginFailed = true;
+            shelflife_login_record_failure($db, $username, time());
         }
     } else {
         $loginFailed = true;
+        shelflife_login_record_failure($db, $username, time());
     }
 }
 
@@ -301,6 +249,11 @@ if (isset($_GET['error'])) {
     if (in_array($oidcError, ["oidc_user_not_found", "oidc_invalid_state", "oidc_email_not_verified", "oidc_invalid_config"], true)) {
         $loginFailed = true;
         $oidcEmailNotVerified = $oidcError === "oidc_email_not_verified";
+    } elseif (in_array($oidcError, ["telegram_auth_failed", "telegram_not_linked", "telegram_login_disabled", "telegram_email_not_verified"], true)) {
+        // ShelfLife: refusals of the Telegram login (telegram_login.php)
+        $loginFailed = true;
+        // telegram_not_linked is also the profile's "not linked yet" text
+        $telegramLoginError = $oidcError === "telegram_not_linked" ? "telegram_login_not_linked" : $oidcError;
     }
 }
 
@@ -312,29 +265,29 @@ if (isset($_GET['error'])) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="<?= $theme == "light" ? "#FFFFFF" : "#12151C" ?>" id="theme-color" />
-    <meta name="apple-mobile-web-app-title" content="Wallos">
-    <title>Wallos - Subscription Tracker</title>
+    <meta name="apple-mobile-web-app-title" content="ShelfLife">
+    <title>ShelfLife &mdash; <?= translate('brand_tagline', $i18n) ?></title>
     <link rel="icon" type="image/png" href="images/icon/favicon.ico" sizes="16x16">
     <link rel="apple-touch-icon" href="images/icon/apple-touch-icon.png">
     <link rel="apple-touch-icon" sizes="152x152" href="images/icon/apple-touch-icon-152.png">
     <link rel="apple-touch-icon" sizes="180x180" href="images/icon/apple-touch-icon-180.png">
     <link rel="manifest" href="manifest.php">
-    <link rel="stylesheet" href="styles/theme.css?<?= $version ?>">
-    <link rel="stylesheet" href="styles/login.css?<?= $version ?>">
-    <link rel="stylesheet" href="styles/themes/red.css?<?= $version ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/green.css?<?= $version ?>" id="green-theme" <?= $colorTheme != "green" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/yellow.css?<?= $version ?>" id="yellow-theme" <?= $colorTheme != "yellow" ? "disabled" : "" ?>>
-    <link rel="stylesheet" href="styles/themes/purple.css?<?= $version ?>" id="purple-theme" <?= $colorTheme != "purple" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/theme.css?<?= $assetVersion ?>">
+    <link rel="stylesheet" href="styles/login.css?<?= $assetVersion ?>">
+    <link rel="stylesheet" href="styles/themes/red.css?<?= $assetVersion ?>" id="red-theme" <?= $colorTheme != "red" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/green.css?<?= $assetVersion ?>" id="green-theme" <?= $colorTheme != "green" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/yellow.css?<?= $assetVersion ?>" id="yellow-theme" <?= $colorTheme != "yellow" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/themes/purple.css?<?= $assetVersion ?>" id="purple-theme" <?= $colorTheme != "purple" ? "disabled" : "" ?>>
     <link rel="stylesheet" href="styles/font-awesome.min.css">
     <link rel="stylesheet" href="styles/barlow.css">
-    <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $version ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
+    <link rel="stylesheet" href="styles/login-dark-theme.css?<?= $assetVersion ?>" id="dark-theme" <?= $theme == "light" ? "disabled" : "" ?>>
     <script type="text/javascript">
         window.update_theme_settings = "<?= $updateThemeSettings ?>";
         window.color_theme = <?= json_encode($colorTheme, JSON_HEX_TAG | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_HEX_APOS) ?>;
     </script>
-    <script type="text/javascript" src="scripts/login.js?<?= $version ?>"></script>
-    <script type="text/javascript" src="scripts/auth-theme.js?<?= $version ?>"></script>
-    <script type="text/javascript" src="scripts/password-toggle.js?<?= $version ?>"></script>
+    <script type="text/javascript" src="scripts/login.js?<?= $assetVersion ?>"></script>
+    <script type="text/javascript" src="scripts/auth-theme.js?<?= $assetVersion ?>"></script>
+    <script type="text/javascript" src="scripts/password-toggle.js?<?= $assetVersion ?>"></script>
 </head>
 
 <body class="<?= $languages[$lang]['dir'] ?>">
@@ -351,11 +304,11 @@ if (isset($_GET['error'])) {
                 <h1><?= translate('auth_tagline', $i18n) ?></h1>
                 <p><?= translate('auth_tagline_sub', $i18n) ?></p>
             </div>
-            <div class="auth-brand-footer">Wallos &mdash; Subscription Tracker</div>
+            <div class="auth-brand-footer">ShelfLife &mdash; <?= translate('brand_tagline', $i18n) ?></div>
         </aside>
         <section class="container">
             <header>
-                <div class="logo-image" title="Wallos - Subscription Tracker">
+                <div class="logo-image" title="ShelfLife">
                     <?php include "images/siteicons/svg/logo.php"; ?>
                 </div>
                 <p>
@@ -417,6 +370,14 @@ if (isset($_GET['error'])) {
                             ?>
                             <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate('oidc_email_not_verified', $i18n) ?></li>
                             <?php
+                        } elseif ($telegramLoginError !== null) {
+                            ?>
+                            <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate($telegramLoginError, $i18n) ?></li>
+                            <?php
+                        } elseif ($loginThrottled) {
+                            ?>
+                            <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate('too_many_login_attempts', $i18n) ?></li>
+                            <?php
                         } else {
                             ?>
                             <li><i class="fa-solid fa-triangle-exclamation"></i><?= translate('login_failed', $i18n) ?></li>
@@ -446,6 +407,21 @@ if (isset($_GET['error'])) {
                         }
                         ?>
                     </ul>
+                    <?php
+                }
+
+                // ShelfLife: Telegram Login Widget, when the bot is configured and
+                // passwords are allowed (telegram_login.php checks the same).
+                $telegramBotUsername = ltrim(trim((string) wallos_env_value('TELEGRAM_BOT_USERNAME')), '@');
+                $telegramBotToken = wallos_env_secret('TELEGRAM_BOT_TOKEN')['value'] ?? null;
+                if (!$password_login_disabled && preg_match('/^[A-Za-z][A-Za-z0-9_]{3,31}$/', $telegramBotUsername)
+                    && is_string($telegramBotToken) && $telegramBotToken !== '') {
+                    ?>
+                    <div class="login-form-telegram">
+                        <script async src="https://telegram.org/js/telegram-widget.js?22"
+                            data-telegram-login="<?= htmlspecialchars($telegramBotUsername) ?>" data-size="large"
+                            data-auth-url="telegram_login.php" data-request-access="write"></script>
+                    </div>
                     <?php
                 }
 

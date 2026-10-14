@@ -226,7 +226,7 @@ function downloadBackupCodes() {
     const element = document.createElement('a');
 
     element.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(codes));
-    element.setAttribute('download', 'wallos-backup-codes.txt');
+    element.setAttribute('download', 'shelflife-backup-codes.txt');
     element.style.display = 'none';
     document.body.appendChild(element);
 

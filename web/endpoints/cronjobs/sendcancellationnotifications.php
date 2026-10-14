@@ -253,7 +253,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                         $emailaddress = !empty($user['email']) ? $user['email'] : $defaultEmail;
                         $name = !empty($user['name']) ? $user['name'] : $defaultName;
 
-                        $mail->setFrom($email['fromEmail'], 'Wallos App');
+                        $mail->setFrom($email['fromEmail'], 'ShelfLife');
                         $mail->addAddress($emailaddress, $name);
 
                         if (!empty($email['otherEmails'])) {
@@ -270,7 +270,7 @@ while ($userToNotify = $usersToNotify->fetchArray(SQLITE3_ASSOC)) {
                             }
                         }
 
-                        $mail->Subject = 'Wallos Cancellation Notification';
+                        $mail->Subject = 'ShelfLife Cancellation Notification';
                         $mail->Body = $message;
 
                         if ($mail->send()) {

@@ -39,8 +39,8 @@ function sc_send($text, $desp = '', $key = '') {
     return $result !== false ? $result : '';
 }
 
-$title = 'Wallos Notification Test';
-$body = 'This is a test notification from Wallos via Serverchan.';
+$title = 'ShelfLife Notification Test';
+$body = 'This is a test notification from ShelfLife via Serverchan.';
 
 $result = sc_send($title, $body, $sendkey);
 $info = json_decode($result, true);

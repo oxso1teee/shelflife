@@ -96,6 +96,24 @@ $hasOverdueSubscriptions = !empty($overdueSubscriptions);
 $upcomingCancellations = get_upcoming_cancellations($db, $userId);
 $hasUpcomingCancellations = !empty($upcomingCancellations);
 
+// ShelfLife: every active record — subscriptions, shelf-life and maintenance
+// dates — soonest due first, with its traffic-light status.
+require_once 'includes/shelflife/status.php';
+$shelflifeToday = shelflife_today();
+$activeRecords = [];
+$stmt = $db->prepare("SELECT id, name, price, currency_id, next_payment, kind FROM subscriptions
+                      WHERE user_id = :userId AND inactive = 0 ORDER BY next_payment ASC, name COLLATE NOCASE ASC");
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$result = $stmt->execute();
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+    if (!shelflife_is_valid_date($row['next_payment'])) {
+        continue;
+    }
+    $row['days_left'] = shelflife_days_left($row['next_payment'], $shelflifeToday);
+    $row['status'] = shelflife_record_status($row['next_payment'], $shelflifeToday);
+    $activeRecords[] = $row;
+}
+
 require_once 'includes/stats_calculations.php';
 
 // Get AI Recommendations for user
@@ -149,6 +167,39 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
         }
     ?>
     <h1><?= translate('hello', $i18n) ?> <?= htmlspecialchars($first_name) ?></h1>
+
+    <div class="upcoming-subscriptions shelflife-records">
+        <h2><?= translate('active_records', $i18n) ?></h2>
+        <div class="dashboard-subscriptions-container">
+            <div class="dashboard-subscriptions-list">
+                <?php
+                if (empty($activeRecords)) {
+                    ?>
+                    <p><?= translate('no_active_records', $i18n) ?></p>
+                    <?php
+                } else {
+                    foreach ($activeRecords as $record) {
+                        $recordKind = $record['kind'] ?? 'subscription';
+                        ?>
+                        <div class="subscription-item shelflife-status-<?= $record['status'] ?>"
+                            onClick="showSubscriptionDetails(event, <?= (int) $record['id'] ?>)" data-id="<?= (int) $record['id'] ?>">
+                            <p class="subscription-item-title"><?= $record['name'] ?></p>
+                            <div class="subscription-item-info">
+                                <p class="subscription-item-kind"><?= translate('record_kind_' . $recordKind, $i18n) ?></p>
+                                <p class="subscription-item-date"><?= formatDate($record['next_payment'], $lang) ?></p>
+                                <p class="shelflife-days-left"><?= htmlspecialchars(shelflife_days_left_text($record['days_left'], $lang)) ?></p>
+                                <?php if ($recordKind === 'subscription') { ?>
+                                    <p class="subscription-item-price"><?= formatPrice($record['price'], $currencies[$record['currency_id']]['code'], $currencies) ?></p>
+                                <?php } ?>
+                            </div>
+                        </div>
+                        <?php
+                    }
+                }
+                ?>
+            </div>
+        </div>
+    </div>
 
     <?php
     // If there are overdue subscriptions, display them
@@ -515,7 +566,7 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
 require_once 'includes/subscription_details_popup.php';
 ?>
 
-<script src="scripts/dashboard.js?<?= $version ?>"></script>
+<script src="scripts/dashboard.js?<?= $assetVersion ?>"></script>
 
 <?php
 require_once 'includes/footer.php';

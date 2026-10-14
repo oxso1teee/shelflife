@@ -6,8 +6,14 @@
 .github/
 
 *.md
+# GPL-3.0 requires the license text and the modification notices to travel with every copy
+!LICENSE.md
+!NOTICE.md
 .gitignore
 .dockerignore
 
 # README screenshots and capture script; not used at runtime
 /screenshots/
+
+# ShelfLife: generated during the build from the copied files, never taken from the context
+/includes/shelflife/asset_revision.php

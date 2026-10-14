@@ -106,7 +106,7 @@ $totalSavingsPerMonth = 0;
 $totalCostsInReplacementsPerMonth = 0;
 
 $statsSubtitleParts = [];
-$query = "SELECT name, price, logo, logo_text_color, logo_variant, frequency, cycle, currency_id, next_payment, payer_user_id, category_id, payment_method_id, inactive, replacement_subscription_id, start_date, auto_renew FROM subscriptions";
+$query = "SELECT name, price, logo, logo_text_color, logo_variant, frequency, cycle, currency_id, next_payment, payer_user_id, category_id, payment_method_id, inactive, replacement_subscription_id, start_date, auto_renew, anchor_day, kind FROM subscriptions";
 $conditions = [];
 $params = [];
 
@@ -165,6 +165,11 @@ $subscriptions = [];
 
 if ($result) {
     while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        // ShelfLife: spending figures count paid subscriptions only, not shelf-life
+        // or maintenance dates.
+        if (($row['kind'] ?? 'subscription') !== 'subscription') {
+            continue;
+        }
         $subscriptions[] = $row;
     }
     if (isset($subscriptions)) {

@@ -57,8 +57,8 @@ if ($rows) {
             foreach ($rows as $user) {
                 $mail->addAddress($user['email']);
                 $mail->isHTML(true);
-                $mail->Subject = 'Wallos - Reset Password';
-                $mail->Body = '<img src="' . $server_url . '/images/siteicons/wallos.png" alt="Logo" />
+                $mail->Subject = 'ShelfLife - Reset Password';
+                $mail->Body = '<img src="' . $server_url . '/images/siteicons/shelflife.png" alt="ShelfLife" width="206" height="40" />
                     <br>
                     A password reset was requested for your account.
                     <br>

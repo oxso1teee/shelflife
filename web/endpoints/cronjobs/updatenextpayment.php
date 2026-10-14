@@ -12,51 +12,13 @@ echo $timezone . "<br />\n";
 $currentDate = new DateTime();
 $currentDateString = $currentDate->format('Y-m-d');
 
-$cycles = array();
-$query = "SELECT * FROM cycles";
-$result = $db->query($query);
-while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-    $cycleId = $row['id'];
-    $cycles[$cycleId] = $row;
-}
+// ShelfLife: the period arithmetic lives in includes/shelflife, shared with the
+// renew endpoint and the bot. It keeps a payment due on the 31st on the last
+// day of shorter months and does not skip a due date that falls on today.
+require_once __DIR__ . '/../../includes/shelflife/subscription_service.php';
 
-$query = "SELECT id, next_payment, frequency, cycle FROM subscriptions WHERE next_payment < :currentDate AND auto_renew = 1 AND inactive = 0";
-$stmt = $db->prepare($query);
-$stmt->bindValue(':currentDate', $currentDate->format('Y-m-d'));
-$result = $stmt->execute();
-
-while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
-    $subscriptionId = $row['id'];
-    $nextPaymentDate = new DateTime($row['next_payment']);
-    $frequency = $row['frequency'];
-    $cycle = $cycles[$row['cycle']]['name'];
-
-    // Calculate the interval to add based on the cycle
-    $intervalSpec = "P";
-    if ($cycle == 'Daily') {
-        $intervalSpec .= "{$frequency}D";
-    } elseif ($cycle === 'Weekly') {
-        $intervalSpec .= "{$frequency}W";
-    } elseif ($cycle === 'Monthly') {
-        $intervalSpec .= "{$frequency}M";
-    } elseif ($cycle === 'Yearly') {
-        $intervalSpec .= "{$frequency}Y";
-    }
-
-    $interval = new DateInterval($intervalSpec);
-
-    // Add intervals until the next payment date is in the future
-    while ($nextPaymentDate < $currentDate) {
-        $nextPaymentDate->add($interval);
-    }
-
-    // Update the subscription's next_payment date
-    $updateQuery = "UPDATE subscriptions SET next_payment = :nextPaymentDate WHERE id = :subscriptionId";
-    $updateStmt = $db->prepare($updateQuery);
-    $updateStmt->bindValue(':nextPaymentDate', $nextPaymentDate->format('Y-m-d'));
-    $updateStmt->bindValue(':subscriptionId', $subscriptionId);
-    $updateStmt->execute();
-}
+$moved = shelflife_advance_overdue_auto_renewals($db, $currentDateString);
+echo "Moved $moved overdue auto-renewing records<br />\n";
 
 $formattedDate = $currentDate->format('Y-m-d');
 

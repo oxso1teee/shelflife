@@ -1783,9 +1783,9 @@ $upcomingPaymentsLimit = normalize_upcoming_payments_limit($settings['upcoming_p
     // Authorization header's "k=" parameter are handed too.
     window.vapidPublicKey = "<?= htmlspecialchars($vapidPublicKey, ENT_QUOTES, 'UTF-8') ?>";
 </script>
-<script src="scripts/settings.js?<?= $version ?>"></script>
-<script src="scripts/theme.js?<?= $version ?>"></script>
-<script src="scripts/notifications.js?<?= $version ?>"></script>
+<script src="scripts/settings.js?<?= $assetVersion ?>"></script>
+<script src="scripts/theme.js?<?= $assetVersion ?>"></script>
+<script src="scripts/notifications.js?<?= $assetVersion ?>"></script>
 
 <?php
 require_once 'includes/footer.php';

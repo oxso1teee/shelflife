@@ -55,7 +55,7 @@ $tokenData = $response !== false ? json_decode($response, true) : null;
 if (!$tokenData || !isset($tokenData['access_token'])) {
     $detail = $curlErrno ? $curlError : ('HTTP ' . $httpCode . ($response !== false ? ': ' . substr($response, 0, 500) : ''));
     error_log('[Wallos OIDC] Token exchange failed for ' . $tokenUrlInfo['host'] . ': ' . $detail);
-    die("OIDC token exchange failed. Check the Wallos server logs for details.");
+    die("OIDC token exchange failed. Check the server logs for details.");
 }
 
 $userInfoUrl = $oidcSettings['user_info_url'];
@@ -82,7 +82,7 @@ $userInfo = $response !== false ? json_decode($response, true) : null;
 if (!$userInfo || !isset($userInfo[$oidcSettings['user_identifier_field']])) {
     $detail = $curlErrno ? $curlError : ('HTTP ' . $httpCode . ($response !== false ? ': ' . substr($response, 0, 500) : ''));
     error_log('[Wallos OIDC] User info fetch failed for ' . $userInfoUrlInfo['host'] . ': ' . $detail);
-    die("Failed to fetch OIDC user info. Check the Wallos server logs for details.");
+    die("Failed to fetch OIDC user info. Check the server logs for details.");
 }
 
 $oidcSub = $userInfo[$oidcSettings['user_identifier_field']];

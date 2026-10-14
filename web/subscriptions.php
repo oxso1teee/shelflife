@@ -212,6 +212,9 @@ $subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscrip
       'MMM d, yyyy'
     );
 
+    require_once __DIR__ . '/includes/shelflife/status.php';
+    $shelflifeToday = shelflife_today();
+
     $print = [];
     foreach ($subscriptions as $subscription) {
       if ($subscription['inactive'] == 1 && isset($settings['hideDisabledSubscriptions']) && $settings['hideDisabledSubscriptions'] === 'true') {
@@ -227,6 +230,10 @@ $subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscrip
       $frequency = $subscription['frequency'];
       $print[$id]['billing_cycle'] = getBillingCycle($cycle, $frequency, $i18n);
       $print[$id]['one_time'] = ($cycle == 5);
+      // ShelfLife: record kind and traffic-light status (includes/shelflife/status.php).
+      $print[$id]['kind'] = $subscription['kind'] ?? 'subscription';
+      $print[$id]['days_left'] = shelflife_is_valid_date($subscription['next_payment']) ? shelflife_days_left($subscription['next_payment'], $shelflifeToday) : null;
+      $print[$id]['status'] = $print[$id]['days_left'] === null ? null : shelflife_record_status($subscription['next_payment'], $shelflifeToday);
       $paymentMethodId = $subscription['payment_method_id'];
       $print[$id]['currency_code'] = $currencies[$subscription['currency_id']]['code'];
       $currencyId = $subscription['currency_id'];
@@ -311,6 +318,15 @@ $subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscrip
     <span class="fa-solid fa-xmark close-form" onClick="closeAddSubscription()"></span>
   </header>
   <form action="endpoints/subscription/add.php" method="post" id="subs-form">
+
+    <div class="form-group">
+      <label for="kind"><?= translate('record_kind', $i18n) ?></label>
+      <select id="kind" name="kind" onchange="applyRecordKind(this.value)">
+        <option value="subscription"><?= translate('record_kind_subscription', $i18n) ?></option>
+        <option value="expiry"><?= translate('record_kind_expiry', $i18n) ?></option>
+        <option value="maintenance"><?= translate('record_kind_maintenance', $i18n) ?></option>
+      </select>
+    </div>
 
     <div class="form-group-inline">
       <input type="text" id="name" name="name" autocomplete="off"
@@ -422,6 +438,8 @@ $subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscrip
           <label for="next_payment" class="split-label">
             <span id="next-payment-label-recurring"><?= translate('next_payment', $i18n) ?></span>
             <span id="next-payment-label-onetime" style="display:none"><?= translate('payment_date', $i18n) ?></span>
+            <span id="next-payment-label-expiry" style="display:none"><?= translate('expiry_date', $i18n) ?></span>
+            <span id="next-payment-label-maintenance" style="display:none"><?= translate('next_maintenance', $i18n) ?></span>
             <div id="autofill-next-payment-button" class="autofill-next-payment hideOnDesktop"
               title="<?= translate('calculate_next_payment_date', $i18n) ?>" onClick="autoFillNextPaymentDate(event)">
               <i class="fa-solid fa-wand-magic-sparkles"></i>
@@ -577,7 +595,7 @@ $subscriptionsView = (isset($_COOKIE['subscriptionsView']) && $_COOKIE['subscrip
 </section>
 
 <?php require_once 'includes/subscription_details_popup.php'; ?>
-<script src="scripts/subscriptions.js?<?= $version ?>"></script>
+<script src="scripts/subscriptions.js?<?= $assetVersion ?>"></script>
 <?php
 if (isset($_GET['add'])) {
   ?>

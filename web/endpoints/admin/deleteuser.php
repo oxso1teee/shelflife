@@ -137,6 +137,16 @@ if ($userId == 1) {
     $stmt->bindValue(':id', $userId, SQLITE3_INTEGER);
     $result = $stmt->execute();
 
+    // ShelfLife: Telegram link tokens are credentials too
+    $stmt = $db->prepare('DELETE FROM telegram_link_tokens WHERE user_id = :id');
+    $stmt->bindValue(':id', $userId, SQLITE3_INTEGER);
+    $result = $stmt->execute();
+
+    // ShelfLife: queued Telegram reminders
+    $stmt = $db->prepare('DELETE FROM telegram_outbox WHERE user_id = :id');
+    $stmt->bindValue(':id', $userId, SQLITE3_INTEGER);
+    $result = $stmt->execute();
+
     // Delete password reset tokens
     $stmt = $db->prepare('DELETE FROM password_resets WHERE user_id = :id');
     $stmt->bindValue(':id', $userId, SQLITE3_INTEGER);

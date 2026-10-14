@@ -263,6 +263,45 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
 
     ?>
 
+    <?php
+    // ShelfLife: link this account to the ShelfLife Telegram bot.
+    require_once 'includes/shelflife/telegram_link.php';
+    $telegramLink = shelflife_link_status($db, $userId);
+    ?>
+    <section class="account-section" id="telegram-link-section">
+        <header>
+            <h2><?= translate('telegram_bot', $i18n) ?></h2>
+        </header>
+        <div class="account-telegram">
+            <p id="telegram-link-status">
+                <?php if ($telegramLink['linked']) { ?>
+                    <i class="fa-solid fa-circle-check"></i> <?= translate('telegram_linked', $i18n) ?>
+                    <?= $telegramLink['telegram_username'] ? '@' . htmlspecialchars($telegramLink['telegram_username']) : '' ?>
+                <?php } else { ?>
+                    <?= translate('telegram_not_linked', $i18n) ?>
+                <?php } ?>
+            </p>
+            <div class="form-group-inline wrap">
+                <input type="button" class="button thin mobile-grow" id="telegram-link-button"
+                    value="<?= translate('telegram_link_button', $i18n) ?>" onClick="createTelegramLink()" />
+                <?php if ($telegramLink['linked']) { ?>
+                    <input type="button" class="secondary-button thin mobile-grow" id="telegram-unlink-button"
+                        value="<?= translate('telegram_unlink_button', $i18n) ?>" onClick="unlinkTelegram()" />
+                <?php } ?>
+            </div>
+            <div class="telegram-link-result hide" id="telegram-link-result">
+                <div class="totp-qrcode-container telegram-link-qr" id="telegram-link-qr"></div>
+                <p><a id="telegram-link-url" href="#" target="_blank" rel="noopener noreferrer"></a></p>
+                <p><?= translate('telegram_link_command', $i18n) ?> <code id="telegram-link-command"></code></p>
+            </div>
+            <div class="settings-notes">
+                <p>
+                    <i class="fa-solid fa-circle-info"></i> <?= translate('telegram_link_info', $i18n) ?>
+                </p>
+            </div>
+        </div>
+    </section>
+
     <section class="account-section">
         <header>
             <h2><?= translate('api_key', $i18n) ?></h2>
@@ -319,9 +358,10 @@ while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
    
 
 </section>
-<script src="scripts/profile.js?<?= $version ?>"></script>
-<script src="scripts/theme.js?<?= $version ?>"></script>
-<script src="scripts/notifications.js?<?= $version ?>"></script>
+<script src="scripts/profile.js?<?= $assetVersion ?>"></script>
+<script src="scripts/telegram_link.js?<?= $assetVersion ?>"></script>
+<script src="scripts/theme.js?<?= $assetVersion ?>"></script>
+<script src="scripts/notifications.js?<?= $assetVersion ?>"></script>
 
 <?php
 require_once 'includes/footer.php';

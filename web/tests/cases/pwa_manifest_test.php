@@ -36,7 +36,7 @@ wallos_test('the manifest is valid JSON with the expected content type', functio
 
     $decoded = json_decode($output, true);
     assert_true($decoded !== null, 'manifest.php produces valid JSON');
-    assert_same('Wallos', $decoded['short_name'] ?? null, 'the manifest content is otherwise unchanged');
+    assert_same('ShelfLife', $decoded['short_name'] ?? null, 'the manifest content is otherwise unchanged');
 });
 
 wallos_test('theme_color and background_color track the theme cookie', function () {
@@ -133,11 +133,14 @@ wallos_test('the legacy service-worker.js stub hands existing registrations over
         'the stub loads the version-aware worker');
 });
 
-wallos_test('the service worker cache name is tied to the app version', function () {
+wallos_test('the service worker cache name is tied to the version of the static files', function () {
     $source = file_get_contents(WALLOS_ROOT . '/service-worker.php');
 
-    assert_contains("'static-cache-<?= \$version ?>'", $source,
-        'every release gets a fresh static cache, and activate deletes the old one');
+    // ShelfLife: $assetVersion is the app version plus a hash of the static
+    // files (includes/shelflife/asset_version.php), so a changed file without a
+    // new Wallos release also gets a fresh cache.
+    assert_contains("'static-cache-<?= \$assetVersion ?>'", $source,
+        'every release and every changed static file gets a fresh static cache, and activate deletes the old one');
     assert_contains("cache: 'reload'", $source,
         'precaching bypasses the HTTP cache so stale files are not stored under the new cache name');
 });

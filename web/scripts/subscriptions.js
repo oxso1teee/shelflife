@@ -40,6 +40,7 @@ function resetForm() {
   const form = document.querySelector("#subs-form");
   form.reset();
   toggleOneTimeCycleUI(false);
+  updateRecordKindUI();
   closeLogoSearch();
   const deleteButton = document.querySelector("#deletesub");
   deleteButton.style = 'display: none';
@@ -81,7 +82,10 @@ function fillEditFormFields(subscription) {
   frequencySelect.value = subscription.frequency;
   const cycleSelect = document.querySelector("#cycle");
   cycleSelect.value = subscription.cycle;
+  const kindSelect = document.querySelector("#kind");
+  if (kindSelect) kindSelect.value = subscription.kind || "subscription";
   toggleOneTimeCycleUI(subscription.cycle == 5);
+  updateRecordKindUI();
   const paymentSelect = document.querySelector("#payment_method");
   paymentSelect.value = subscription.payment_method_id;
   const categorySelect = document.querySelector("#category");
@@ -697,6 +701,7 @@ document.addEventListener('DOMContentLoaded', function () {
   if (cycleSelectEl) {
     cycleSelectEl.addEventListener("change", function () {
       toggleOneTimeCycleUI(this.value === "5");
+      updateRecordKindUI();
     });
   }
 });
@@ -718,7 +723,7 @@ document.addEventListener('DOMContentLoaded', function () {
       const cancellationDate = document.querySelector("#cancellation_date");
       if (cancellationDate) cancellationDate.value = "";
       const notifyDays = document.querySelector("#notify_days_before");
-      if (notifyDays) notifyDays.value = -1;
+      if (notifyDays && recordKind() === "subscription") notifyDays.value = -1;
     }
 
     const formData = new FormData(subscriptionForm);
@@ -1125,6 +1130,8 @@ function toggleOneTimeCycleUI(isOneTime) {
   const notificationsGroup = document.querySelector("#notifications-group");
   const notifyDaysCancellationGroup = document.querySelector("#notify-days-cancellation-group");
   const notificationsCheckbox = document.querySelector("#notifications");
+  // ShelfLife: a one-time shelf-life or maintenance date is exactly what needs a reminder.
+  const keepNotifications = recordKind() !== "subscription";
 
   if (isOneTime) {
     if (frequencySelect) frequencySelect.style.display = 'none';
@@ -1133,9 +1140,15 @@ function toggleOneTimeCycleUI(isOneTime) {
     if (autofillDesktop) autofillDesktop.style.display = 'none';
     if (labelRecurring) labelRecurring.style.display = 'none';
     if (labelOnetime) labelOnetime.style.display = '';
-    if (notificationsGroup) notificationsGroup.style.display = 'none';
-    if (notifyDaysCancellationGroup) notifyDaysCancellationGroup.style.display = 'none';
-    if (notificationsCheckbox) { notificationsCheckbox.checked = false; notificationsCheckbox.disabled = true; }
+    if (!keepNotifications) {
+      if (notificationsGroup) notificationsGroup.style.display = 'none';
+      if (notifyDaysCancellationGroup) notifyDaysCancellationGroup.style.display = 'none';
+      if (notificationsCheckbox) { notificationsCheckbox.checked = false; notificationsCheckbox.disabled = true; }
+    } else {
+      if (notificationsGroup) notificationsGroup.style.display = '';
+      if (notifyDaysCancellationGroup) notifyDaysCancellationGroup.style.display = '';
+      if (notificationsCheckbox) notificationsCheckbox.disabled = false;
+    }
   } else {
     if (frequencySelect) frequencySelect.style.display = '';
     if (autoRenewGroup) autoRenewGroup.style.display = '';
@@ -1147,6 +1160,59 @@ function toggleOneTimeCycleUI(isOneTime) {
     if (notifyDaysCancellationGroup) notifyDaysCancellationGroup.style.display = '';
     if (notificationsCheckbox) notificationsCheckbox.disabled = false;
   }
+}
+
+// ShelfLife: what the record tracks — a paid subscription, a shelf-life date or a
+// maintenance date. The kind decides whether a price is required and how the
+// date is labelled; a shelf-life date is one-time, maintenance repeats.
+function recordKind() {
+  return document.querySelector("#kind")?.value || "subscription";
+}
+
+function applyRecordKind(kind) {
+  const cycleSelect = document.querySelector("#cycle");
+  if (cycleSelect) {
+    if (kind === "expiry") {
+      cycleSelect.value = "5";
+    } else if (kind === "maintenance" && cycleSelect.value === "5") {
+      cycleSelect.value = "3";
+    }
+    toggleOneTimeCycleUI(cycleSelect.value === "5");
+  }
+  updateRecordKindUI();
+}
+
+function updateRecordKindUI() {
+  const kind = recordKind();
+  const price = document.querySelector("#price");
+  if (price) price.required = kind === "subscription";
+
+  const labels = {
+    recurring: document.querySelector("#next-payment-label-recurring"),
+    onetime: document.querySelector("#next-payment-label-onetime"),
+    expiry: document.querySelector("#next-payment-label-expiry"),
+    maintenance: document.querySelector("#next-payment-label-maintenance"),
+  };
+  if (kind === "subscription") {
+    if (labels.expiry) labels.expiry.style.display = "none";
+    if (labels.maintenance) labels.maintenance.style.display = "none";
+    return;
+  }
+  Object.entries(labels).forEach(([name, label]) => {
+    if (label) label.style.display = name === kind ? "" : "none";
+  });
+}
+
+// ShelfLife: adds months the way includes/shelflife/dates.php does, so the
+// suggested date matches what the server will compute later. The day is clamped
+// to the length of the target month and returns to anchorDay afterwards;
+// Date#setMonth overflows instead (31 January + 1 month = 3 March).
+function addMonthsClamped(date, months, anchorDay) {
+  const monthIndex = date.getFullYear() * 12 + date.getMonth() + months;
+  const year = Math.floor(monthIndex / 12);
+  const month = monthIndex % 12;
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(anchorDay, daysInMonth));
 }
 
 function autoFillNextPaymentDate(e) {
@@ -1162,11 +1228,14 @@ function autoFillNextPaymentDate(e) {
     return;
   }
   
-  const today = new Date();  
+  const today = new Date();
   const cycle = cycleSelect.value;
   const frequency = Number(frequencySelect.value);
 
-  const nextDate = new Date(startDate.value);
+  // Read the date as a local calendar date: new Date("YYYY-MM-DD") is UTC
+  // midnight, which is the previous day west of Greenwich.
+  const [startYear, startMonth, startDay] = startDate.value.split("-").map(Number);
+  let nextDate = new Date(startYear, startMonth - 1, startDay);
   let safetyCounter = 0;
   const maxIterations = 1000;
 
@@ -1178,11 +1247,11 @@ function autoFillNextPaymentDate(e) {
     case '2': // Weeks
       nextDate.setDate(nextDate.getDate() + 7 * frequency);
       break;
-    case '3': // Months  
-      nextDate.setMonth(nextDate.getMonth() + frequency);
+    case '3': // Months
+      nextDate = addMonthsClamped(nextDate, frequency, startDay);
       break;
     case '4': // Years
-      nextDate.setFullYear(nextDate.getFullYear() + frequency);
+      nextDate = addMonthsClamped(nextDate, 12 * frequency, startDay);
       break;
     default:
     }
