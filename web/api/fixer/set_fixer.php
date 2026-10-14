@@ -1,0 +1,261 @@
+<?php
+/*
+This API Endpoint accepts POST requests only.
+It receives the following parameters:
+- api_key: the API key of the user (for Wallos authentication).
+- fixer_api_key: the Fixer.io or APILayer API key to save (optional; if empty/omitted, clears the key).
+  Not read for provider '2', which needs no account.
+- provider: the provider type (optional; '0' for Fixer.io, '1' for APILayer.com, '2' for
+  Frankfurter, defaults to '0').
+
+It returns a JSON object with the following properties:
+- success: whether the request was successful (boolean).
+- title: the title of the response (string).
+- message: detailed information or error message (string).
+
+Example response:
+{
+  "success": true,
+  "title": "Fixer settings updated",
+  "message": "Fixer API key has been saved."
+}
+*/
+
+require_once '../../includes/connect_endpoint.php';
+
+header('Content-Type: application/json; charset=UTF-8');
+
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Invalid request method',
+        'message' => 'Only POST requests are allowed.'
+    ]);
+    exit;
+}
+
+$apiKey = $_POST['api_key'] ?? $_POST['apiKey'] ?? null;
+
+// Authenticate user first
+if (!$apiKey) {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Missing API key',
+        'message' => 'API key is required.'
+    ]);
+    exit;
+}
+
+$sql = "SELECT * FROM user WHERE api_key = :apiKey";
+$stmt = $db->prepare($sql);
+$stmt->bindValue(':apiKey', $apiKey, SQLITE3_TEXT);
+$result = $stmt->execute();
+$user = $result->fetchArray(SQLITE3_ASSOC);
+
+if (!$user) {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Unauthorized',
+        'message' => 'Invalid API key.'
+    ]);
+    exit;
+}
+
+$userId = $user['id'];
+$fixerApiKey = isset($_POST['fixer_api_key']) ? trim($_POST['fixer_api_key']) : '';
+$provider = $_POST['provider'] ?? '0';
+
+if (!in_array($provider, ['0', '1', '2', 0, 1, 2], true)) {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Invalid provider',
+        'message' => 'Provider must be 0 (Fixer.io), 1 (APILayer.com) or 2 (Frankfurter).'
+    ]);
+    exit;
+}
+$provider = intval($provider);
+
+// frankfurter.dev publishes the ECB reference rates without an account, so an
+// empty key on this provider is not an unconfigured one: choosing it is the
+// whole configuration, and there is nothing to send anywhere to validate.
+//
+// Which is why it has to be decided before the clearing path below, where an
+// empty key means "remove my settings" - the two would otherwise read the same
+// request in opposite ways.
+//
+// The row is updated rather than deleted and reinserted, so that a key stored
+// for one of the other two providers is still there to switch back to.
+if ($provider === 2) {
+    $updateSql = "UPDATE fixer SET provider = :provider WHERE user_id = :userId";
+    $updateStmt = $db->prepare($updateSql);
+    $updateStmt->bindValue(':provider', 2, SQLITE3_INTEGER);
+    $updateStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+    $updateResult = $updateStmt->execute();
+
+    if ($updateResult === false) {
+        echo json_encode([
+            'success' => false,
+            'title' => 'Database error',
+            'message' => 'Failed to save Fixer API settings.'
+        ]);
+        $db->close();
+        exit;
+    }
+
+    if ($db->changes() === 0) {
+        // Nothing stored yet: the account that never registered anywhere, which
+        // is the case this provider exists for. An empty api_key goes in, and
+        // the row is what every reader takes for "a provider is configured".
+        $insertSql = "INSERT INTO fixer (api_key, provider, user_id) VALUES (:api_key, :provider, :userId)";
+        $insertStmt = $db->prepare($insertSql);
+        $insertStmt->bindValue(':api_key', '', SQLITE3_TEXT);
+        $insertStmt->bindValue(':provider', 2, SQLITE3_INTEGER);
+        $insertStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+
+        if ($insertStmt->execute() === false) {
+            echo json_encode([
+                'success' => false,
+                'title' => 'Database error',
+                'message' => 'Failed to save Fixer API settings.'
+            ]);
+            $db->close();
+            exit;
+        }
+    }
+
+    echo json_encode([
+        'success' => true,
+        'title' => 'Fixer settings updated',
+        'message' => 'Frankfurter is now the currency rate provider. It needs no API key.'
+    ]);
+    $db->close();
+    exit;
+}
+
+// If key is empty, clear the settings
+if ($fixerApiKey === '') {
+    $removeSql = "DELETE FROM fixer WHERE user_id = :userId";
+    $removeStmt = $db->prepare($removeSql);
+    $removeStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
+    $removeResult = $removeStmt->execute();
+
+    if ($removeResult) {
+        echo json_encode([
+            'success' => true,
+            'title' => 'Fixer settings cleared',
+            'message' => 'Fixer API key has been removed.'
+        ]);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'title' => 'Database error',
+            'message' => 'Failed to remove Fixer API settings.'
+        ]);
+    }
+    $db->close();
+    exit;
+}
+
+// Validate the API key against the provider
+if ($provider === 1) {
+    $testKeyUrl = "https://api.apilayer.com/fixer/latest?base=USD&symbols=EUR";
+    $context = stream_context_create([
+        'http' => [
+            'method' => 'GET',
+            'header' => 'apikey: ' . $fixerApiKey,
+            'ignore_errors' => true
+        ]
+    ]);
+    $response = @file_get_contents($testKeyUrl, false, $context);
+} else {
+    $testKeyUrl = "http://data.fixer.io/api/latest?access_key=" . urlencode($fixerApiKey);
+    $response = @file_get_contents($testKeyUrl);
+}
+
+if ($response === false) {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Validation error',
+        'message' => 'Failed to connect to the currency rate provider for verification.'
+    ]);
+    exit;
+}
+
+// Parse headers for APILayer limit info
+$usageLimit = null;
+$usageRemaining = null;
+if ($provider === 1 && isset($http_response_header)) {
+    foreach ($http_response_header as $header) {
+        if (stripos($header, 'x-ratelimit-limit-month:') === 0) {
+            $usageLimit = (int) trim(substr($header, strlen('x-ratelimit-limit-month:')));
+        } elseif (stripos($header, 'x-ratelimit-remaining-month:') === 0) {
+            $usageRemaining = (int) trim(substr($header, strlen('x-ratelimit-remaining-month:')));
+        }
+    }
+}
+
+$apiData = json_decode($response, true);
+if (isset($apiData['success']) && $apiData['success'] == true) {
+    // Delete existing settings first
+    //
+    // The same statement sixty lines up, on the clearing path, reads its
+    // result. This copy did not, while the insert that replaces the row it
+    // removes did - so a failed delete answered "saved successfully" over a
+    // fixer table that now holds two keys for one user.
+    $removeSql = "DELETE FROM fixer WHERE user_id = :userId";
+    $removeStmt = $db->prepare($removeSql);
+    $removeStmt->bindParam(':userId', $userId, SQLITE3_INTEGER);
+    $removeResult = $removeStmt->execute();
+
+    if ($removeResult === false) {
+        echo json_encode([
+            'success' => false,
+            'title' => 'Database error',
+            'message' => 'Failed to save Fixer API settings.'
+        ]);
+        $db->close();
+        exit;
+    }
+
+    // Insert new settings
+    $insertSql = "INSERT INTO fixer (api_key, provider, user_id) VALUES (:api_key, :provider, :userId)";
+    $stmtInsert = $db->prepare($insertSql);
+    $stmtInsert->bindParam(':api_key', $fixerApiKey, SQLITE3_TEXT);
+    $stmtInsert->bindParam(':provider', $provider, SQLITE3_INTEGER);
+    $stmtInsert->bindParam(':userId', $userId, SQLITE3_INTEGER);
+    $resultInsert = $stmtInsert->execute();
+
+    if ($resultInsert) {
+        // If usage limits are parsed and supported by the db schema
+        if ($usageLimit !== null && $usageRemaining !== null
+            && $db->querySingle("SELECT COUNT(*) FROM pragma_table_info('fixer') WHERE name='usage_used'") > 0) {
+            $usageStmt = $db->prepare("UPDATE fixer SET usage_used = :used, usage_limit = :limit, usage_updated_at = :updatedAt WHERE user_id = :userId");
+            $usageStmt->bindValue(':used', $usageLimit - $usageRemaining, SQLITE3_INTEGER);
+            $usageStmt->bindValue(':limit', $usageLimit, SQLITE3_INTEGER);
+            $usageStmt->bindValue(':updatedAt', date('Y-m-d H:i:s'), SQLITE3_TEXT);
+            $usageStmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+            $usageStmt->execute();
+        }
+
+        echo json_encode([
+            'success' => true,
+            'title' => 'Fixer settings updated',
+            'message' => 'Fixer API settings have been saved successfully.'
+        ]);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'title' => 'Database error',
+            'message' => 'Failed to save Fixer API settings.'
+        ]);
+    }
+} else {
+    echo json_encode([
+        'success' => false,
+        'title' => 'Invalid Fixer API key',
+        'message' => 'The provided Fixer API key is invalid.'
+    ]);
+}
+
+$db->close();
+?>

@@ -1,0 +1,10 @@
+/db/*
+!/db/wallos.empty.db
+/images/uploads/logos/*
+!/images/uploads/logos/wallos.png
+.DS_Store
+.idea/
+.vscode/
+AGENTS.md
+.antigravitycli
+plan.html

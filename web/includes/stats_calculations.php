@@ -1,0 +1,383 @@
+<?php
+require_once __DIR__ . '/budget_period_calculations.php';
+require_once __DIR__ . '/currency_rates.php';
+require_once __DIR__ . '/default_names.php';
+
+function getPricePerMonth($cycle, $frequency, $price)
+{
+    switch ($cycle) {
+        case 1:
+            $numberOfPaymentsPerMonth = (30 / $frequency);
+            return $price * $numberOfPaymentsPerMonth;
+        case 2:
+            $numberOfPaymentsPerMonth = (4.35 / $frequency);
+            return $price * $numberOfPaymentsPerMonth;
+        case 3:
+            $numberOfPaymentsPerMonth = (1 / $frequency);
+            return $price * $numberOfPaymentsPerMonth;
+        case 4:
+            $numberOfMonths = (12 * $frequency);
+            return $price / $numberOfMonths;
+        case 5:
+            return 0;
+    }
+}
+
+function getPriceConverted($price, $currency, $database, $userId)
+{
+    return wallos_convert_price($price, $currency, $database, $userId);
+}
+
+// Get categories
+$categories = array();
+$query = "SELECT * FROM categories WHERE user_id = :userId ORDER BY `order` ASC";
+$stmt = $db->prepare($query);
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$result = $stmt->execute();
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+  $categoryId = $row['id'];
+  $categories[$categoryId] = $row;
+  $categories[$categoryId]['count'] = 0;
+  $categoryCost[$categoryId]['cost'] = 0;
+  $categoryCost[$categoryId]['name'] = $row['name'];
+}
+
+// Get payment methods
+$paymentMethods = array();
+$query = "SELECT * FROM payment_methods WHERE user_id = :userId AND enabled = 1";
+$stmt = $db->prepare($query);
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$result = $stmt->execute();
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+  $paymentMethodId = $row['id'];
+  $paymentMethods[$paymentMethodId] = $row;
+  $paymentMethods[$paymentMethodId]['count'] = 0;
+  $paymentMethodsCount[$paymentMethodId]['count'] = 0;
+  $paymentMethodsCount[$paymentMethodId]['name'] = $row['name'];
+}
+
+//Get household members
+$members = array();
+$query = "SELECT * FROM household WHERE user_id = :userId";
+$stmt = $db->prepare($query);
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$result = $stmt->execute();
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+  $memberId = $row['id'];
+  $members[$memberId] = $row;
+  $members[$memberId]['count'] = 0;
+  $memberCost[$memberId]['cost'] = 0;
+  $memberCost[$memberId]['name'] = $row['name'];
+}
+
+// Unfiltered counts for filter menu display (so non-selected items remain visible when a filter is active)
+$stmt = $db->prepare("SELECT category_id, COUNT(*) as cnt FROM subscriptions WHERE user_id = :userId GROUP BY category_id");
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$r = $stmt->execute();
+$menuCategoryCounts = [];
+while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
+    $menuCategoryCounts[$row['category_id']] = $row['cnt'];
+}
+
+$stmt = $db->prepare("SELECT payer_user_id, COUNT(*) as cnt FROM subscriptions WHERE user_id = :userId GROUP BY payer_user_id");
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$r = $stmt->execute();
+$menuMemberCounts = [];
+while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
+    $menuMemberCounts[$row['payer_user_id']] = $row['cnt'];
+}
+
+$stmt = $db->prepare("SELECT payment_method_id, COUNT(*) as cnt FROM subscriptions WHERE user_id = :userId AND inactive = 0 GROUP BY payment_method_id");
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$r = $stmt->execute();
+$menuPaymentCounts = [];
+while ($row = $r->fetchArray(SQLITE3_ASSOC)) {
+    $menuPaymentCounts[$row['payment_method_id']] = $row['cnt'];
+}
+
+$activeSubscriptions = 0;
+$inactiveSubscriptions = 0;
+// Calculate total monthly price
+$mostExpensiveSubscription = array();
+$mostExpensiveSubscription['price'] = 0;
+$amountDueThisMonth = 0;
+$totalCostPerMonth = 0;
+$totalSavingsPerMonth = 0;
+$totalCostsInReplacementsPerMonth = 0;
+
+$statsSubtitleParts = [];
+$query = "SELECT name, price, logo, logo_text_color, logo_variant, frequency, cycle, currency_id, next_payment, payer_user_id, category_id, payment_method_id, inactive, replacement_subscription_id, start_date, auto_renew FROM subscriptions";
+$conditions = [];
+$params = [];
+
+if (isset($_GET['member']) && $_GET['member'] !== '') {
+    $memberIds = array_map('intval', explode(',', $_GET['member']));
+    $conditions[] = "payer_user_id IN (" . implode(',', $memberIds) . ")";
+    foreach ($memberIds as $mid) {
+        if (isset($members[$mid])) {
+            $statsSubtitleParts[] = $members[$mid]['name'];
+        }
+    }
+}
+
+if (isset($_GET['category']) && $_GET['category'] !== '') {
+    $categoryIds = array_map('intval', explode(',', $_GET['category']));
+    $conditions[] = "category_id IN (" . implode(',', $categoryIds) . ")";
+    // A category still carrying its untouched default name is recognised
+    // against the account's own creation-language default, not a literal
+    // English string - #1216 gives every language its own default, so an
+    // account created in German never had an English name to match here.
+    $noCategoryDefaultName = default_no_category_name($userData['language'] ?? 'en');
+    foreach ($categoryIds as $cid) {
+        if (isset($categories[$cid])) {
+            $statsSubtitleParts[] = $categories[$cid]['name'] === $noCategoryDefaultName ? translate("no_category", $i18n) : $categories[$cid]['name'];
+        }
+    }
+}
+
+if (isset($_GET['payment']) && $_GET['payment'] !== '') {
+    $paymentIds = array_map('intval', explode(',', $_GET['payment']));
+    $conditions[] = "payment_method_id IN (" . implode(',', $paymentIds) . ")";
+    foreach ($paymentIds as $pid) {
+        if (isset($paymentMethodsCount[$pid])) {
+            $statsSubtitleParts[] = $paymentMethodsCount[$pid]['name'];
+        }
+    }
+}
+
+$conditions[] = "user_id = :userId";
+$params[':userId'] = $userId;
+
+if (!empty($conditions)) {
+    $query .= " WHERE " . implode(' AND ', $conditions);
+}
+
+$stmt = $db->prepare($query);
+$statsSubtitle = !empty($statsSubtitleParts) ? '(' . implode(', ', $statsSubtitleParts) . ')' : "";
+
+foreach ($params as $key => $value) {
+    $stmt->bindValue($key, $value, SQLITE3_INTEGER);
+}
+
+$result = $stmt->execute();
+$usesMultipleCurrencies = false;
+$subscriptions = [];
+
+if ($result) {
+    while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+        $subscriptions[] = $row;
+    }
+    if (isset($subscriptions)) {
+        $replacementSubscriptions = array();
+
+        foreach ($subscriptions as $subscription) {
+            $name = $subscription['name'];
+            $price = $subscription['price'];
+            $logo = $subscription['logo'];
+            $frequency = $subscription['frequency'];
+            $cycle = $subscription['cycle'];
+            $currency = $subscription['currency_id'];
+            if ($currency != $userData['main_currency']) {
+                $usesMultipleCurrencies = true;
+            }
+            $next_payment = $subscription['next_payment'];
+            $payerId = $subscription['payer_user_id'];
+            if (isset($members[$payerId])) {
+                $members[$payerId]['count'] += 1;
+            }
+            $categoryId = $subscription['category_id'];
+            if (isset($categories[$categoryId])) {
+                $categories[$categoryId]['count'] += 1;
+            }
+            $paymentMethodId = $subscription['payment_method_id'];
+            if (isset($paymentMethods[$paymentMethodId])) {
+                $paymentMethods[$paymentMethodId]['count'] += 1;
+            }
+            $inactive = $subscription['inactive'];
+            $replacementSubscriptionId = $subscription['replacement_subscription_id'];
+            $originalSubscriptionPrice = getPriceConverted($price, $currency, $db, $userId);
+            $price = getPricePerMonth($cycle, $frequency, $originalSubscriptionPrice);
+
+            if ($inactive == 0) {
+                if ($cycle != 5) {
+                    $activeSubscriptions++;
+                    if (isset($paymentMethodsCount[$paymentMethodId])) {
+                        $paymentMethodsCount[$paymentMethodId]['count'] += 1;
+                    }
+                }
+                $totalCostPerMonth += $price;
+                if (isset($memberCost[$payerId])) {
+                    $memberCost[$payerId]['cost'] += $price;
+                }
+                if (isset($categoryCost[$categoryId])) {
+                    $categoryCost[$categoryId]['cost'] += $price;
+                }
+                if ($price > $mostExpensiveSubscription['price']) {
+                    $mostExpensiveSubscription['price'] = $price;
+                    $mostExpensiveSubscription['name'] = $name;
+                    $mostExpensiveSubscription['logo'] = $logo;
+                    $mostExpensiveSubscription['logo_text_color'] = $subscription['logo_text_color'] ?? null;
+                    $mostExpensiveSubscription['logo_variant'] = $subscription['logo_variant'] ?? null;
+                }
+
+                if ($cycle != 5) {
+                    // Calculate ammount due this month
+                    $nextPaymentDate = DateTime::createFromFormat('Y-m-d', trim($next_payment));
+                    $todayVal = new DateTime('today');
+                    $endOfMonth = new DateTime('last day of this month');
+
+                    if ($nextPaymentDate >= $todayVal && $nextPaymentDate <= $endOfMonth) {
+                        $timesToPay = 1;
+                        $daysInMonth = $endOfMonth->diff($todayVal)->days + 1;
+                        $daysRemaining = $endOfMonth->diff($nextPaymentDate)->days + 1;
+                        if ($cycle == 1) {
+                            $timesToPay = $daysRemaining / $frequency;
+                        }
+                        if ($cycle == 2) {
+                            $weeksInMonth = ceil($daysInMonth / 7);
+                            $weeksRemaining = ceil($daysRemaining / 7);
+                            $timesToPay = $weeksRemaining / $frequency;
+                        }
+                        $amountDueThisMonth += $originalSubscriptionPrice * $timesToPay;
+                    }
+                }
+            } else {
+                $inactiveSubscriptions++;
+                $totalSavingsPerMonth += $price;
+
+                // Check if it has a replacement subscription and if it was not already counted
+                if ($replacementSubscriptionId && !in_array($replacementSubscriptionId, $replacementSubscriptions)) {
+                    $query = "SELECT price, currency_id, cycle, frequency FROM subscriptions WHERE id = :replacementSubscriptionId AND user_id = :userId";
+                    $stmt = $db->prepare($query);
+                    $stmt->bindValue(':replacementSubscriptionId', $replacementSubscriptionId, SQLITE3_INTEGER);
+                    $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+                    $result = $stmt->execute();
+                    $replacementSubscription = $result->fetchArray(SQLITE3_ASSOC);
+                    if ($replacementSubscription) {
+                        $replacementSubscriptionPrice = getPriceConverted($replacementSubscription['price'], $replacementSubscription['currency_id'], $db, $userId);
+                        $replacementSubscriptionPrice = getPricePerMonth($replacementSubscription['cycle'], $replacementSubscription['frequency'], $replacementSubscriptionPrice);
+                        $totalCostsInReplacementsPerMonth += $replacementSubscriptionPrice;
+                    }
+                }
+
+                $replacementSubscriptions[] = $replacementSubscriptionId;
+            }
+
+        }
+
+        // Subtract the total cost of replacement subscriptions from the total savings
+        $totalSavingsPerMonth -= $totalCostsInReplacementsPerMonth;
+
+        // Calculate yearly price
+        $totalCostPerYear = $totalCostPerMonth * 12;
+
+        // Calculate average subscription monthly cost
+        if ($activeSubscriptions > 0) {
+            $averageSubscriptionCost = $totalCostPerMonth / $activeSubscriptions;
+        } else {
+            $totalCostPerYear = 0;
+            $averageSubscriptionCost = 0;
+        }
+    } else {
+        $totalCostPerYear = 0;
+        $averageSubscriptionCost = 0;
+    }
+}
+
+$today = new DateTime('now');
+$budgetPeriodType = sanitizeBudgetPeriodType($userData['budget_period_type'] ?? 'monthly');
+$budgetPeriodAnchorDate = sanitizeBudgetAnchorDate($userData['budget_period_anchor_date'] ?? getDefaultBudgetAnchorDate());
+$activeBudgetPeriod = getActiveBudgetPeriod($today, $budgetPeriodType, $budgetPeriodAnchorDate);
+$budgetPeriodStart = $activeBudgetPeriod['start'];
+$budgetPeriodEnd = $activeBudgetPeriod['end'];
+$budgetPeriodLabel = $activeBudgetPeriod['label'];
+
+// A monthly period whose anchor lands on the calendar month's boundaries is
+// identical to the plain monthly budget, so there's nothing distinct to show.
+$calendarMonthStart = new DateTime($today->format('Y-m-01'));
+$calendarMonthEnd = new DateTime($today->format('Y-m-t'));
+$periodDiffersFromCalendarMonth = $budgetPeriodStart->format('Y-m-d') !== $calendarMonthStart->format('Y-m-d')
+    || $budgetPeriodEnd->format('Y-m-d') !== $calendarMonthEnd->format('Y-m-d');
+
+$amountNeededThisPeriod = computeAmountNeededInPeriod($subscriptions ?? [], $today, $budgetPeriodEnd, $db, $userId);
+
+$showVsMonthlyBudgetGraph = false;
+$vsMonthlyBudgetDataPoints = [];
+if (isset($userData['budget']) && $userData['budget'] > 0) {
+    $monthlyBudget = $userData['budget'];
+    $monthlyBudgetLeft = max(0, $monthlyBudget - $totalCostPerMonth);
+    $monthlyBudgetUsed = min(100, ($totalCostPerMonth / $monthlyBudget) * 100);
+    if ($totalCostPerMonth > $monthlyBudget) {
+        $monthlyOverBudgetAmount = $totalCostPerMonth - $monthlyBudget;
+    }
+    $showVsMonthlyBudgetGraph = true;
+    $vsMonthlyBudgetDataPoints = [
+        [
+            "label" => translate('budget_remaining', $i18n),
+            "y" => $monthlyBudgetLeft,
+        ],
+        [
+            "label" => translate('monthly_cost', $i18n),
+            "y" => $totalCostPerMonth,
+        ],
+    ];
+    // Backwards compatibility for pages still referencing legacy monthly budget variables.
+    $budget = $monthlyBudget;
+    $budgetLeft = $monthlyBudgetLeft;
+    $budgetUsed = $monthlyBudgetUsed;
+    $overBudgetAmount = $monthlyOverBudgetAmount ?? 0;
+}
+
+$showVsPeriodBudgetGraph = false;
+$vsPeriodBudgetDataPoints = [];
+if ($periodDiffersFromCalendarMonth && isset($userData['period_budget']) && $userData['period_budget'] > 0) {
+    $periodBudget = $userData['period_budget'];
+    $periodBudgetLeft = max(0, $periodBudget - $amountNeededThisPeriod);
+    $periodBudgetUsed = min(100, ($amountNeededThisPeriod / $periodBudget) * 100);
+    if ($amountNeededThisPeriod > $periodBudget) {
+        $periodOverBudgetAmount = $amountNeededThisPeriod - $periodBudget;
+    }
+    $showVsPeriodBudgetGraph = true;
+    $vsPeriodBudgetDataPoints = [
+        [
+            "label" => translate('budget_remaining', $i18n),
+            "y" => $periodBudgetLeft,
+        ],
+        [
+            "label" => translate('amount_needed_this_period', $i18n),
+            "y" => $amountNeededThisPeriod,
+        ],
+    ];
+}
+
+// Backwards compatibility for pages still referencing legacy graph variables.
+$showVsBudgetGraph = $showVsMonthlyBudgetGraph;
+$vsBudgetDataPoints = $vsMonthlyBudgetDataPoints;
+
+$showCantConverErrorMessage = false;
+if ($usesMultipleCurrencies) {
+    $query = "SELECT api_key FROM fixer WHERE user_id = :userId";
+    $stmt = $db->prepare($query);
+    $stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+    $result = $stmt->execute();
+    if ($result->fetchArray(SQLITE3_ASSOC) === false) {
+        $showCantConverErrorMessage = true;
+    }
+}
+
+$query = "SELECT * FROM total_yearly_cost WHERE user_id = :userId";
+$stmt = $db->prepare($query);
+$stmt->bindValue(':userId', $userId, SQLITE3_INTEGER);
+$result = $stmt->execute();
+
+$totalMonthlyCostDataPoints = [];
+while ($row = $result->fetchArray(SQLITE3_ASSOC)) {
+    $totalMonthlyCostDataPoints[] = [
+        "label" => html_entity_decode($row['date']),
+        "y" => round($row['cost'] / 12, 2),
+    ];
+}
+
+$showTotalMonthlyCostGraph = count($totalMonthlyCostDataPoints) > 1;
+
+?>
