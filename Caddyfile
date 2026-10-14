@@ -1,0 +1,23 @@
+# ShelfLife: the public entry point. Caddy obtains and renews the HTTPS
+# certificate for SHELFLIFE_DOMAIN by itself (ports 80 and 443 must be open).
+#
+# - /api/internal/ is the bot's API inside the compose network; it is never
+#   served to the outside.
+# - No access log is written: Wallos's read API and calendar feed carry the API
+#   key in the query string.
+
+{$SHELFLIFE_DOMAIN:localhost} {
+	encode gzip
+
+	@internal path /api/internal/*
+	respond @internal 404
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy web:80
+}

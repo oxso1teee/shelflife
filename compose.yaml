@@ -1,0 +1,61 @@
+name: shelflife
+
+services:
+  web:
+    build: ./web
+    image: shelflife-web:dev
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      # Bot username for the t.me link on the profile page.
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      # Shared with the bot; the internal API refuses everything without it.
+      SHELFLIFE_SERVICE_KEY: ${SHELFLIFE_SERVICE_KEY:-}
+      # The cron job in this container sends the reminders through the bot.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      # Local hour from which new reminders go out (0-23).
+      SHELFLIFE_NOTIFY_HOUR: ${SHELFLIFE_NOTIFY_HOUR:-9}
+    volumes:
+      - ./.data/db:/var/www/html/db
+      - ./.data/logos:/var/www/html/images/uploads/logos
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8282}:80"
+    networks: [shelflife]
+    restart: unless-stopped
+
+  bot:
+    build: ./bot
+    image: shelflife-bot:dev
+    environment:
+      TZ: ${TZ:-Europe/Moscow}
+      BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      WALLOS_INTERNAL_URL: http://web/api/internal/telegram
+      SHELFLIFE_SERVICE_KEY: ${SHELFLIFE_SERVICE_KEY:-}
+    depends_on:
+      web:
+        condition: service_healthy
+    networks: [shelflife]
+    restart: unless-stopped
+
+  # Public HTTPS entry point; start it with: docker compose --profile proxy up -d
+  caddy:
+    image: caddy:2.10-alpine
+    profiles: [proxy]
+    environment:
+      SHELFLIFE_DOMAIN: ${SHELFLIFE_DOMAIN:-localhost}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web]
+    networks: [shelflife]
+    restart: unless-stopped
+
+networks:
+  shelflife: {}
+
+volumes:
+  caddy-data: {}
+  caddy-config: {}
